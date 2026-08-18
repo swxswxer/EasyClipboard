@@ -1,6 +1,6 @@
 # Tauri 跨平台剪贴板开发计划
 
-版本：1.3  
+版本：1.4
 目标平台：Windows 10/11、macOS 13+  
 产品形态：类似 Paste 的底部弹出式统一毛玻璃剪贴板；MVP 聚焦 Windows/macOS 本地剪贴板历史，账号与跨设备同步在后续版本提供
 
@@ -31,12 +31,12 @@
 |---|---|
 | 桌面框架 | Tauri 2 |
 | 界面 | React + TypeScript + Vite |
-| 状态管理 | Zustand |
-| 长列表 | TanStack Virtual |
+| 状态管理 | React Hooks；规模扩大后再评估独立状态库 |
+| 长列表 | 游标分页；达到更大数据量后再引入虚拟列表 |
 | 动画 | CSS Transform，必要时 Motion |
 | 跨平台视觉 | 统一深色毛玻璃设计；共用布局、圆角、透明度、颜色和动效规范 |
 | 桌面核心 | Rust + Tokio |
-| 本地数据库 | SQLite + sqlx |
+| 本地数据库 | SQLite + tokio-rusqlite + FTS5 |
 | 本地文件 | 按 SHA-256 内容寻址的 Blob 缓存 |
 | Windows 适配 | windows-rs + Win32/COM |
 | macOS 适配 | objc2/AppKit，必要时少量 Swift/Objective-C |
@@ -127,7 +127,7 @@ ClipboardGroup
 
 - 支持纯文本、PNG/JPEG 图片、单个或多个普通文件。
 - 保存来源应用、时间、类型、字符数/文件大小等基本信息。
-- 相同内容短时间去重。
+- 基于 SHA-256 对相同内容全局去重；再次复制或粘贴已有内容时移动原记录到顶部。
 - 默认保存最近 500 条或 30 天，可配置其中一个简单上限。
 - 文件在本机先保存路径引用；路径失效时明确提示。
 
@@ -155,13 +155,13 @@ ClipboardGroup
 #### 回写和粘贴
 
 - 点击或回车将内容写回系统剪贴板。
-- 自动粘贴作为实验选项；失败时降级为“只复制”。
+- 选择内容后自动切回原应用并粘贴。macOS 必须先取得辅助功能权限；Windows 遇到管理员目标或焦点/输入限制时保留剪贴板内容并提示手动按 `Ctrl+V`。
 - 写回自身剪贴板时不重复产生历史记录。
 
 #### 本地隐私与设置
 
 - 一键暂停或恢复剪贴板记录。
-- 本地黑名单：可排除指定应用。
+- macOS 提供基于 Bundle ID 的应用排除列表；Windows 不提供用户应用排除功能，但遵守系统剪贴板的敏感与历史排除标记。
 - 剪贴板历史、缩略图和文件引用仅保存在本机，不上传网络。
 - 提供历史保留上限和一键清空本地数据。
 - 清理任务必须保留所有分组内项目，并在设置页说明分组内容的永久保留规则。
@@ -172,7 +172,7 @@ ClipboardGroup
 - 同一套 MVP 功能同时支持 Windows 10/11 与 macOS 13+。
 - 同一套 React 页面、组件结构和设计令牌覆盖两个平台，只在 Tauri/Rust 窗口层做必要的原生适配。
 - 提供可安装、可卸载的 Windows 安装包和 macOS DMG。
-- 完成 macOS Intel/Apple Silicon 与 Windows 常见 DPI 的基础回归测试。
+- 完成 macOS Apple Silicon 与 Windows 10/11 x64 常见 DPI 的基础回归测试。
 
 ### 4.2 MVP 非目标
 
@@ -182,7 +182,7 @@ ClipboardGroup
 - 不支持超大文件和云盘占位文件的特殊处理。
 - 不做 OCR、AI 分类、团队共享和浏览器扩展。
 - 不做嵌套分组、复杂标签、智能规则和移动端。
-- 不上 Mac App Store，先采用 Developer ID 签名和官网 DMG。
+- 0.1.0 内测包暂不签名或公证；正式发布前再加入 Developer ID、Windows 代码签名和公证流程。
 
 ### 4.3 MVP 验收指标
 
@@ -197,7 +197,7 @@ ClipboardGroup
 | 分组可靠性 | 重启应用、清理普通历史后，分组和分组内项目保持完整 |
 | 分组操作 | 新建、重命名、删除、移入、移出及当前分组搜索均通过测试 |
 | 视觉一致性 | Windows/macOS 核心页面布局、间距、颜色和交互一致；透明效果关闭时仍清晰可用 |
-| 平台覆盖 | Windows 10/11、macOS Intel/Apple Silicon 核心流程通过 |
+| 平台覆盖 | Windows 10/11 x64、macOS 13+ Apple Silicon 核心流程通过 |
 | 本地隐私 | 无账号、无云端依赖，日志不包含剪贴板正文 |
 
 ### 4.4 MVP 周计划
@@ -264,7 +264,7 @@ ClipboardGroup
 
 ### 5.6 一期发布门槛
 
-- Windows 10/11、Intel/Apple Silicon macOS 完成回归测试。
+- Windows 10/11 x64、macOS Apple Silicon 完成回归测试；Intel 支持在一期另行验证。
 - 7×24 小时常驻稳定性测试通过。
 - 1 万条历史下搜索和横向滚动无明显卡顿。
 - 网络抖动、睡眠唤醒、Token 过期后能自动恢复。
@@ -315,7 +315,7 @@ ClipboardGroup
 ### 7.2 系统测试矩阵
 
 - Windows 10、Windows 11；100%、125%、150%、200% DPI。
-- macOS Intel、Apple Silicon；单屏、多屏、全屏、Spaces、Stage Manager。
+- macOS 13+ Apple Silicon；单屏、多屏、全屏、Spaces、Stage Manager；Intel 纳入一期扩展矩阵。
 - 来源应用：浏览器、Office、微信/企业微信、Finder/Explorer、代码编辑器、截图工具。
 - 数据：长文本、大图、多文件、同内容重复复制、失效路径和特殊字符文件名。
 - 一期增加网络矩阵：离线、慢网、丢包、切换 Wi-Fi、代理、休眠后恢复。
@@ -326,7 +326,7 @@ ClipboardGroup
 |---|---|---|
 | macOS 缺少剪贴板变化事件 | 空闲功耗、漏采集 | 自适应轮询 `changeCount`，唤醒和前台变化时主动检查 |
 | 文件跨设备不是路径同步 | 文件不可用 | 必须上传真实内容，目标端下载后再构造本地文件列表 |
-| 自动粘贴权限和焦点不稳定 | 用户误以为失败 | “写入剪贴板”作为可靠主路径，自动粘贴可选并可降级 |
+| 自动粘贴权限和焦点不稳定 | 用户误以为失败 | macOS 将辅助功能设为强制门槛；Windows 写入成功但受 UIPI/焦点限制时明确提示手动 `Ctrl+V` |
 | 原生毛玻璃效果跨平台差异 | 两端观感不一致或文字难读 | 统一设计令牌并限制透明度范围；原生效果只作为背景层，不可用时降级为不透明深色背景 |
 | 多格式剪贴板差异 | 格式丢失 | 采用 `representations[]`，保留原始格式与通用格式 |
 | 分组项目被自动清理或误删 | 常用内容丢失 | 清理 SQL 强制排除 `group_id` 非空项目；删除分组默认移回历史并二次确认 |
@@ -360,7 +360,7 @@ ClipboardGroup
 
 ## 10. 关键决策
 
-1. 第一版支持 Windows 10/11 和 macOS 13+，暂不支持 Linux。
+1. 第一版支持 Windows 10/11 x64 和 macOS 13+ Apple Silicon，暂不支持 Linux、Windows ARM64 或 macOS Intel。
 2. Tauri 负责窗口、托盘、权限和发布；复杂剪贴板逻辑采用自定义 Rust 平台模块；Windows/macOS 共用一套中性毛玻璃界面，不维护 Liquid Glass 等平台专属视觉版本。
 3. MVP 完全本地运行，不要求登录，不建设同步服务，先验证基础剪贴板体验。
 4. MVP 支持一级自定义分组；分组内容永久保留，普通历史清理不得影响分组数据。

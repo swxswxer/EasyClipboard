@@ -188,6 +188,24 @@ impl Database {
                 )?;
                 transaction.commit()?;
             }
+            if schema_version < 3 {
+                let transaction = connection.transaction()?;
+                transaction.execute_batch(
+                    r#"
+                    ALTER TABLE clipboard_items RENAME COLUMN source_bundle_id TO source_app_id;
+                    ALTER TABLE representations RENAME COLUMN uti TO format_name;
+                    UPDATE representations
+                    SET format_name = CASE format_name
+                        WHEN 'public.utf8-plain-text' THEN 'text/plain'
+                        WHEN 'public.html' THEN 'text/html'
+                        WHEN 'public.rtf' THEN 'text/rtf'
+                        ELSE format_name
+                    END;
+                    PRAGMA user_version = 3;
+                    "#,
+                )?;
+                transaction.commit()?;
+            }
             connection.execute(
                 "INSERT OR IGNORE INTO settings(id, value_json) VALUES(1, ?1)",
                 params![default_settings],
@@ -213,7 +231,7 @@ impl Database {
             let mut items = Vec::new();
             if trimmed.is_empty() {
                 let mut statement = connection.prepare(
-                    "SELECT id, kind, title, source_name, source_bundle_id, copied_at, byte_size, pinned, group_id, missing_files
+                    "SELECT id, kind, title, source_name, source_app_id, copied_at, byte_size, pinned, group_id, missing_files
                      FROM clipboard_items
                      WHERE (?1 IS NULL OR group_id = ?1)
                      ORDER BY copied_at DESC, id DESC
@@ -224,7 +242,7 @@ impl Database {
             } else {
                 let fts_query = format!("\"{}\"*", trimmed.replace('"', "\"\""));
                 let mut statement = connection.prepare(
-                    "SELECT i.id, i.kind, i.title, i.source_name, i.source_bundle_id, i.copied_at, i.byte_size, i.pinned, i.group_id, i.missing_files
+                    "SELECT i.id, i.kind, i.title, i.source_name, i.source_app_id, i.copied_at, i.byte_size, i.pinned, i.group_id, i.missing_files
                      FROM clipboard_items i
                      JOIN clipboard_fts f ON f.item_id = i.id
                      WHERE f.search_text MATCH ?1 AND (?2 IS NULL OR i.group_id = ?2)
@@ -243,7 +261,7 @@ impl Database {
         let blob_dir = self.blob_dir.clone();
         self.connection.call(move |connection| {
             let result = connection.query_row(
-                "SELECT id, kind, title, source_name, source_bundle_id, copied_at, byte_size, pinned, group_id,
+                "SELECT id, kind, title, source_name, source_app_id, copied_at, byte_size, pinned, group_id,
                         missing_files, content, files_json, thumbnail_path
                  FROM clipboard_items WHERE id = ?1",
                 params![id],
@@ -294,7 +312,7 @@ impl Database {
         let title = captured.title.clone();
         let content = captured.content.clone();
         let source_name = captured.source_name.clone();
-        let source_bundle_id = captured.source_bundle_id.clone();
+        let source_app_id = captured.source_app_id.clone();
         let hash = captured.hash.clone();
         let byte_size = captured.byte_size as i64;
         let html = captured.html.clone();
@@ -325,8 +343,8 @@ impl Database {
 
             if let Some(existing_id) = duplicate {
                 connection.execute(
-                    "UPDATE clipboard_items SET copied_at = ?2, source_name = ?3, source_bundle_id = ?4 WHERE id = ?1",
-                    params![existing_id, effective_now, source_name, source_bundle_id],
+                    "UPDATE clipboard_items SET copied_at = ?2, source_name = ?3, source_app_id = ?4 WHERE id = ?1",
+                    params![existing_id, effective_now, source_name, source_app_id],
                 )?;
                 return Ok(existing_id);
             }
@@ -334,10 +352,10 @@ impl Database {
             let transaction = connection.transaction()?;
             transaction.execute(
                 "INSERT INTO clipboard_items(
-                    id, kind, title, content, source_name, source_bundle_id, content_hash, copied_at,
+                    id, kind, title, content, source_name, source_app_id, content_hash, copied_at,
                     byte_size, files_json, image_path, thumbnail_path
                  ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![new_id, kind, title, content, source_name, source_bundle_id, hash, effective_now,
+                params![new_id, kind, title, content, source_name, source_app_id, hash, effective_now,
                         byte_size, files_json, new_image_path, new_thumbnail_path],
             )?;
             transaction.execute(
@@ -346,19 +364,19 @@ impl Database {
             )?;
             if !content.is_empty() {
                 transaction.execute(
-                    "INSERT INTO representations(item_id, uti, inline_text) VALUES(?1, 'public.utf8-plain-text', ?2)",
+                    "INSERT INTO representations(item_id, format_name, inline_text) VALUES(?1, 'text/plain', ?2)",
                     params![new_id, content],
                 )?;
             }
             if let Some(bytes) = html {
                 transaction.execute(
-                    "INSERT INTO representations(item_id, uti, blob_data) VALUES(?1, 'public.html', ?2)",
+                    "INSERT INTO representations(item_id, format_name, blob_data) VALUES(?1, 'text/html', ?2)",
                     params![new_id, bytes],
                 )?;
             }
             if let Some(bytes) = rtf {
                 transaction.execute(
-                    "INSERT INTO representations(item_id, uti, blob_data) VALUES(?1, 'public.rtf', ?2)",
+                    "INSERT INTO representations(item_id, format_name, blob_data) VALUES(?1, 'text/rtf', ?2)",
                     params![new_id, bytes],
                 )?;
             }
@@ -743,14 +761,18 @@ impl Database {
             let mut html = None;
             let mut rtf = None;
             let mut statement = connection.prepare(
-                "SELECT uti, blob_data FROM representations WHERE item_id = ?1 AND uti IN ('public.html', 'public.rtf')",
+                "SELECT format_name, blob_data FROM representations WHERE item_id = ?1 AND format_name IN ('text/html', 'text/rtf')",
             )?;
             let rows = statement.query_map(params![id], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Option<Vec<u8>>>(1)?))
             })?;
             for row in rows {
-                let (uti, bytes) = row?;
-                if uti == "public.html" { html = bytes; } else if uti == "public.rtf" { rtf = bytes; }
+                let (format_name, bytes) = row?;
+                if format_name == "text/html" {
+                    html = bytes;
+                } else if format_name == "text/rtf" {
+                    rtf = bytes;
+                }
             }
             Ok((html, rtf))
         }).await.map_err(AppError::from)
@@ -805,7 +827,7 @@ fn summary_from_row(
         },
         title: row.get(2)?,
         source_name: row.get(3)?,
-        source_bundle_id: row.get(4)?,
+        source_app_id: row.get(4)?,
         copied_at: millis_to_iso(row.get(5)?),
         byte_size: row.get::<_, i64>(6)? as u64,
         pinned,
@@ -842,7 +864,7 @@ mod tests {
             image_png: None,
             files: vec![],
             source_name: "Tests".into(),
-            source_bundle_id: Some("tests".into()),
+            source_app_id: Some("tests".into()),
             byte_size: text.len() as u64,
             hash: format!("hash-{text}"),
         }
@@ -939,11 +961,11 @@ mod tests {
                 )?;
                 connection.execute(
                     "INSERT INTO clipboard_items(
-                        id, kind, title, content, source_name, source_bundle_id, content_hash,
+                        id, kind, title, content, source_name, source_app_id, content_hash,
                         copied_at, byte_size, pinned, group_id, files_json, image_path,
                         thumbnail_path, missing_files
                      )
-                     SELECT ?1, kind, title, content, 'New Source', source_bundle_id, content_hash,
+                     SELECT ?1, kind, title, content, 'New Source', source_app_id, content_hash,
                             copied_at + 100, byte_size, 0, NULL, files_json, image_path,
                             thumbnail_path, missing_files
                      FROM clipboard_items WHERE id = ?2",
@@ -952,6 +974,10 @@ mod tests {
                 connection.execute(
                     "INSERT INTO clipboard_fts(item_id, search_text) VALUES(?1, 'legacy duplicate')",
                     params![duplicate],
+                )?;
+                connection.execute_batch(
+                    "ALTER TABLE clipboard_items RENAME COLUMN source_app_id TO source_bundle_id;
+                     ALTER TABLE representations RENAME COLUMN format_name TO uti;",
                 )?;
                 connection.pragma_update(None, "user_version", 1)?;
                 Ok::<(), tokio_rusqlite::rusqlite::Error>(())
@@ -970,6 +996,43 @@ mod tests {
         assert_eq!(items[0].id, original);
         assert_eq!(items[0].group_id.as_deref(), Some(group.id.as_str()));
         assert_eq!(items[0].source_name, "New Source");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn schema_v2_migrates_platform_identifiers_and_format_names() {
+        let root = std::env::temp_dir().join(format!("easyclipboard-test-{}", Uuid::new_v4()));
+        let db = Database::open(&root).await.unwrap();
+        let id = db.insert_capture(capture("legacy schema")).await.unwrap();
+        db.connection
+            .call(|connection| {
+                connection.execute_batch(
+                    "ALTER TABLE clipboard_items RENAME COLUMN source_app_id TO source_bundle_id;
+                     ALTER TABLE representations RENAME COLUMN format_name TO uti;
+                     UPDATE representations SET uti = 'public.utf8-plain-text' WHERE uti = 'text/plain';
+                     PRAGMA user_version = 2;",
+                )?;
+                Ok::<(), tokio_rusqlite::rusqlite::Error>(())
+            })
+            .await
+            .unwrap();
+        drop(db);
+
+        let reopened = Database::open(&root).await.unwrap();
+        let item = reopened.get_item(id.clone()).await.unwrap();
+        assert_eq!(item.summary.source_app_id.as_deref(), Some("tests"));
+        let format_name: String = reopened
+            .connection
+            .call(move |connection| {
+                connection.query_row(
+                    "SELECT format_name FROM representations WHERE item_id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(format_name, "text/plain");
         let _ = std::fs::remove_dir_all(root);
     }
 

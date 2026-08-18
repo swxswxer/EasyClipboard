@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClipboardItemDetail, ClipboardItemSummary, ClipboardPage, Group, PermissionState, Settings } from "./types";
+import type { ClipboardItemDetail, ClipboardItemSummary, ClipboardPage, Group, DesktopCapabilities, Settings } from "./types";
 import { RepositoryError } from "./types";
 import { ClipboardPanel, type MenuState, type PanelDialogState } from "./components/ClipboardPanel";
 import { SettingsPage } from "./components/SettingsPage";
@@ -37,7 +37,7 @@ function ClipboardApp() {
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [permission, setPermission] = useState<PermissionState | null>(null);
+  const [permission, setPermission] = useState<DesktopCapabilities | null>(null);
   const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const toastTimer = useRef<number | null>(null);
   const requestToken = useRef(0);
@@ -76,14 +76,14 @@ function ClipboardApp() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextGroups, nextSettings, nextPermission] = await Promise.all([repository.listGroups(), repository.getSettings(), repository.getPermissionState()]);
+      const [nextGroups, nextSettings, nextPermission] = await Promise.all([repository.listGroups(), repository.getSettings(), repository.getDesktopCapabilities()]);
       setGroups(nextGroups); setSettings(nextSettings); setPermission(nextPermission);
       await load(false);
     } catch (error) { notify(errorText(error)); }
   }, [load, notify]);
 
   const refreshPermission = useCallback(async () => {
-    try { setPermission(await repository.getPermissionState()); }
+    try { setPermission(await repository.getDesktopCapabilities()); }
     catch (error) { notify(errorText(error)); }
   }, [notify]);
 
@@ -97,7 +97,7 @@ function ClipboardApp() {
   useEffect(() => { void load(false); }, [load]);
   useEffect(() => {
     let active = true;
-    void Promise.all([repository.listGroups(), repository.getSettings(), repository.getPermissionState()]).then(([nextGroups, nextSettings, nextPermission]) => {
+    void Promise.all([repository.listGroups(), repository.getSettings(), repository.getDesktopCapabilities()]).then(([nextGroups, nextSettings, nextPermission]) => {
       if (!active) return;
       setGroups(nextGroups); setSettings(nextSettings); setPermission(nextPermission);
     }).catch((error) => { if (active) notify(errorText(error)); });
@@ -128,7 +128,7 @@ function ClipboardApp() {
   }, [notify]);
 
   useEffect(() => {
-    if (permission?.accessibility !== false) return;
+    if (permission?.pasteAutomation !== "permission_required") return;
     const timer = window.setInterval(() => void refreshPermission(), 1_000);
     const onFocus = () => void refreshPermission();
     window.addEventListener("focus", onFocus);
@@ -136,11 +136,11 @@ function ClipboardApp() {
       window.clearInterval(timer);
       window.removeEventListener("focus", onFocus);
     };
-  }, [permission?.accessibility, refreshPermission]);
+  }, [permission?.pasteAutomation, refreshPermission]);
 
   useEffect(() => {
-    if (permission?.accessibility === false) { setDialog(null); setMenu(null); }
-  }, [permission?.accessibility]);
+    if (permission?.pasteAutomation === "permission_required") { setDialog(null); setMenu(null); }
+  }, [permission?.pasteAutomation]);
 
   useEffect(() => {
     if (!selectedId) { setDetail(null); return; }
@@ -191,7 +191,14 @@ function ClipboardApp() {
 
   const paste = async (item: ClipboardItemSummary) => {
     try {
-      await repository.pasteItem(item.id);
+      const outcome = await repository.pasteItem(item.id);
+      if (outcome.mode === "manual_required") {
+        notify({
+          elevated_target: "内容已复制，目标应用权限更高，请手动按 Ctrl+V",
+          focus_denied: "内容已复制，无法切回目标应用，请手动按 Ctrl+V",
+          input_blocked: "内容已复制，系统阻止了按键输入，请手动按 Ctrl+V",
+        }[outcome.reason ?? "input_blocked"]);
+      }
     } catch (error) {
       if (error instanceof RepositoryError && error.code === "permission_denied") await refreshPermission();
       notify(errorText(error));
@@ -214,16 +221,16 @@ function ClipboardApp() {
     } catch (error) { notify(errorText(error)); }
   };
 
-  const requestAccessibility = async () => {
+  const requestPasteAutomationAccess = async () => {
     try {
-      const next = await repository.requestAccessibility();
+      const next = await repository.requestPasteAutomationAccess();
       setPermission(next);
-      if (!next.accessibility) await repository.openAccessibilitySettings();
+      if (next.pasteAutomation === "permission_required") await repository.openPasteAutomationSettings();
     } catch (error) { notify(errorText(error)); }
   };
 
-  const openAccessibilitySettings = async () => {
-    try { await repository.openAccessibilitySettings(); }
+  const openPasteAutomationSettings = async () => {
+    try { await repository.openPasteAutomationSettings(); }
     catch (error) { notify(errorText(error)); }
   };
 
@@ -242,8 +249,8 @@ function ClipboardApp() {
       onPaste={(item) => void paste(item)} onClosePanel={closePanel} onLoadMore={() => void load(true)}
       onToggleRecording={() => void toggleRecording()}
       onStartRecording={() => void startRecording()}
-      onRequestAccessibility={() => void requestAccessibility()}
-      onOpenAccessibilitySettings={() => void openAccessibilitySettings()}
+      onRequestPasteAutomationAccess={() => void requestPasteAutomationAccess()}
+      onOpenPasteAutomationSettings={() => void openPasteAutomationSettings()}
     />
   );
   return <main className="app-stage">{panel}</main>;

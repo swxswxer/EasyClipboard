@@ -39,6 +39,14 @@ describe("App", () => {
     expect(screen.queryByText(/已复制/)).not.toBeInTheDocument();
   });
 
+  it("explains the Windows manual-paste fallback after clipboard write succeeds", async () => {
+    vi.spyOn(repository, "pasteItem").mockResolvedValue({ mode: "manual_required", reason: "elevated_target" });
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("MVP 只保留基础剪贴板功能")).toBeInTheDocument());
+    fireEvent.doubleClick(screen.getByText("MVP 只保留基础剪贴板功能"));
+    expect(await screen.findByText(/目标应用权限更高.*Ctrl\+V/)).toBeInTheDocument();
+  });
+
   it("pastes the focused clipboard row with the macOS Return key", async () => {
     const pasteItem = vi.spyOn(repository, "pasteItem");
     render(<App />);
@@ -50,13 +58,22 @@ describe("App", () => {
   });
 
   it("locks the main panel until accessibility permission is granted", async () => {
-    vi.spyOn(repository, "getPermissionState").mockResolvedValue({ clipboard: "authorized", accessibility: false });
-    const requestAccessibility = vi.spyOn(repository, "requestAccessibility");
+    vi.spyOn(repository, "getDesktopCapabilities").mockResolvedValue({ platform: "macos", clipboardAccess: "ready", pasteAutomation: "permission_required", supportsAppExclusions: true });
+    const requestPasteAutomationAccess = vi.spyOn(repository, "requestPasteAutomationAccess");
     render(<App />);
     expect(await screen.findByRole("alertdialog")).toHaveTextContent("需要开启辅助功能");
     fireEvent.click(screen.getByRole("button", { name: "开启辅助功能" }));
-    await waitFor(() => expect(requestAccessibility).toHaveBeenCalledOnce());
+    await waitFor(() => expect(requestPasteAutomationAccess).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.queryByText("需要开启辅助功能")).not.toBeInTheDocument());
+  });
+
+  it("does not show a permission gate on Windows", async () => {
+    vi.spyOn(repository, "getDesktopCapabilities").mockResolvedValue({
+      platform: "windows", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: false,
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("搜索剪贴板")).toBeEnabled();
+    expect(screen.queryByText("需要开启辅助功能")).not.toBeInTheDocument();
   });
 
   it("uses an in-app confirmation before deleting an item", async () => {

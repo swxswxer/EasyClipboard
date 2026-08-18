@@ -6,29 +6,31 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 
 use crate::{
     app_state::AppState,
-    clipboard,
     error::AppError,
-    models::{ClipboardItemDetail, ClipboardPage, ExcludedApp, Group, PermissionState, Settings},
-    native_macos, windowing,
+    models::{
+        ClipboardItemDetail, ClipboardPage, DesktopCapabilities, ExcludedApp, Group, Settings,
+    },
+    platform::{self, PasteOutcome, TargetApplication},
+    windowing,
 };
 
 fn validate_paste_target(
-    accessibility_granted: bool,
-    target: Option<native_macos::FrontmostApp>,
-) -> Result<native_macos::FrontmostApp, AppError> {
-    if !accessibility_granted {
+    automation_ready: bool,
+    target: Option<TargetApplication>,
+) -> Result<TargetApplication, AppError> {
+    if !automation_ready {
         return Err(AppError::PermissionDenied);
     }
     target.ok_or(AppError::ClipboardUnavailable)
 }
 
-fn clipboard_permission(state: &AppState) -> String {
+fn clipboard_access_state(state: &AppState) -> String {
     state
         .runtime
         .lock()
         .map(|runtime| {
             if runtime.clipboard_started {
-                "authorized"
+                "ready"
             } else {
                 "not_requested"
             }
@@ -64,14 +66,14 @@ pub async fn paste_item(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
-) -> Result<(), AppError> {
+) -> Result<PasteOutcome, AppError> {
     let target = state
         .runtime
         .lock()
         .map_err(|_| AppError::ClipboardUnavailable)?
         .target_app
         .clone();
-    let target = validate_paste_target(native_macos::accessibility_trusted(false), target)?;
+    let target = validate_paste_target(platform::paste_automation_ready(), target)?;
     let item = state.database.get_item(id.clone()).await?;
     let (html, rtf) = state.database.text_representations(id.clone()).await?;
     let image = if matches!(item.summary.kind, crate::models::ClipboardKind::Image) {
@@ -79,30 +81,33 @@ pub async fn paste_item(
     } else {
         None
     };
-    let receipt = clipboard::write_item(&item, image.as_deref(), html.as_deref(), rtf.as_deref())?;
+    let receipt = platform::write_item(&item, image.as_deref(), html.as_deref(), rtf.as_deref())?;
     {
         let mut runtime = state
             .runtime
             .lock()
             .map_err(|_| AppError::ClipboardUnavailable)?;
-        runtime.last_change_count = receipt.change_count;
-        runtime.suppress_change_count = Some(receipt.change_count);
+        runtime.last_change_count = receipt.change_token;
+        runtime.suppress_change_count = Some(receipt.change_token);
         runtime.suppress_until = Instant::now() + Duration::from_secs(1);
         runtime.expected_hash = Some(receipt.content_hash);
     }
-    windowing::hide_clipboard(&app);
-    if !native_macos::activate_application(target.pid) {
-        let _ = windowing::show_clipboard(&app);
-        return Err(AppError::ClipboardUnavailable);
-    }
-    tokio::time::sleep(Duration::from_millis(85)).await;
-    if !native_macos::send_command_v() {
-        let _ = windowing::show_clipboard(&app);
-        return Err(AppError::ClipboardUnavailable);
-    }
     state.database.touch_item(id).await?;
     emit_changed(&app);
-    Ok(())
+    windowing::hide_clipboard(&app);
+    tokio::time::sleep(Duration::from_millis(85)).await;
+    match platform::activate_and_paste(&target) {
+        Ok(outcome) => {
+            if matches!(outcome.mode, crate::platform::PasteMode::ManualRequired) {
+                let _ = windowing::show_clipboard(&app);
+            }
+            Ok(outcome)
+        }
+        Err(error) => {
+            let _ = windowing::show_clipboard(&app);
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -198,7 +203,11 @@ pub async fn move_item(
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, AppError> {
-    state.database.get_settings().await
+    state
+        .database
+        .get_settings()
+        .await
+        .map(platform::sanitize_settings)
 }
 
 #[tauri::command]
@@ -207,6 +216,7 @@ pub async fn update_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<Settings, AppError> {
+    let settings = platform::sanitize_settings(settings);
     if settings.launch_at_login {
         app.autolaunch()
             .enable()
@@ -241,47 +251,65 @@ pub async fn set_global_shortcut(
 }
 
 #[tauri::command]
-pub fn get_permission_state(state: State<'_, AppState>) -> PermissionState {
-    PermissionState {
-        clipboard: clipboard_permission(&state),
-        accessibility: native_macos::accessibility_trusted(false),
+pub fn get_desktop_capabilities(state: State<'_, AppState>) -> DesktopCapabilities {
+    DesktopCapabilities {
+        platform: platform::PLATFORM_NAME.into(),
+        clipboard_access: clipboard_access_state(&state),
+        paste_automation: if platform::paste_automation_ready() {
+            "ready".into()
+        } else {
+            "permission_required".into()
+        },
+        supports_app_exclusions: platform::SUPPORTS_APP_EXCLUSIONS,
     }
 }
 
 #[tauri::command]
-pub fn start_recording(state: State<'_, AppState>) -> Result<PermissionState, AppError> {
-    if !native_macos::accessibility_trusted(false) {
+pub fn start_recording(state: State<'_, AppState>) -> Result<DesktopCapabilities, AppError> {
+    if !platform::paste_automation_ready() {
         return Err(AppError::PermissionDenied);
     }
-    let source = native_macos::frontmost_app().unwrap_or(native_macos::FrontmostApp {
+    let source = platform::frontmost_application().unwrap_or(TargetApplication {
         pid: 0,
         name: "EasyClipboard".into(),
-        bundle_id: Some("com.easyclipboard.desktop".into()),
+        identifier: Some("com.easyclipboard.desktop".into()),
+        #[cfg(target_os = "windows")]
+        window_handle: 0,
     });
-    let _ = clipboard::read_capture(source);
+    let _ = platform::read_capture(source);
     let mut runtime = state
         .runtime
         .lock()
         .map_err(|_| AppError::ClipboardUnavailable)?;
     runtime.clipboard_started = true;
-    runtime.last_change_count = clipboard::change_count();
-    Ok(PermissionState {
-        clipboard: "authorized".into(),
-        accessibility: native_macos::accessibility_trusted(false),
+    runtime.last_change_count = platform::change_token();
+    Ok(DesktopCapabilities {
+        platform: platform::PLATFORM_NAME.into(),
+        clipboard_access: "ready".into(),
+        paste_automation: "ready".into(),
+        supports_app_exclusions: platform::SUPPORTS_APP_EXCLUSIONS,
     })
 }
 
 #[tauri::command]
-pub fn request_accessibility(state: State<'_, AppState>) -> PermissionState {
-    PermissionState {
-        clipboard: clipboard_permission(&state),
-        accessibility: native_macos::accessibility_trusted(true),
+pub fn request_paste_automation_access(state: State<'_, AppState>) -> DesktopCapabilities {
+    let ready = platform::request_paste_automation();
+    DesktopCapabilities {
+        platform: platform::PLATFORM_NAME.into(),
+        clipboard_access: clipboard_access_state(&state),
+        paste_automation: if ready {
+            "ready"
+        } else {
+            "permission_required"
+        }
+        .into(),
+        supports_app_exclusions: platform::SUPPORTS_APP_EXCLUSIONS,
     }
 }
 
 #[tauri::command]
-pub fn open_accessibility_settings() -> Result<(), AppError> {
-    if native_macos::open_accessibility_settings() {
+pub fn open_paste_automation_settings() -> Result<(), AppError> {
+    if platform::open_paste_automation_settings() {
         Ok(())
     } else {
         Err(AppError::PermissionDenied)
@@ -290,39 +318,7 @@ pub fn open_accessibility_settings() -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn pick_excluded_app() -> Result<Option<ExcludedApp>, AppError> {
-    let Some(handle) = rfd::AsyncFileDialog::new()
-        .add_filter("macOS 应用", &["app"])
-        .pick_file()
-        .await
-    else {
-        return Ok(None);
-    };
-    let path = handle.path();
-    let plist_path = path.join("Contents/Info.plist");
-    let value = plist::Value::from_file(&plist_path)
-        .map_err(|error| AppError::Storage(error.to_string()))?;
-    let dictionary = value
-        .as_dictionary()
-        .ok_or_else(|| AppError::Storage("invalid application Info.plist".into()))?;
-    let bundle_id = dictionary
-        .get("CFBundleIdentifier")
-        .and_then(plist::Value::as_string)
-        .ok_or_else(|| AppError::Storage("missing bundle identifier".into()))?;
-    let name = dictionary
-        .get("CFBundleDisplayName")
-        .or_else(|| dictionary.get("CFBundleName"))
-        .and_then(plist::Value::as_string)
-        .map(str::to_owned)
-        .or_else(|| {
-            path.file_stem()
-                .and_then(|name| name.to_str())
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| "macOS 应用".into());
-    Ok(Some(ExcludedApp {
-        name,
-        bundle_id: bundle_id.into(),
-    }))
+    platform::open_excluded_app_picker().await
 }
 
 #[tauri::command]
@@ -342,18 +338,20 @@ fn emit_changed(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::validate_paste_target;
-    use crate::{error::AppError, native_macos::FrontmostApp};
+    use crate::{error::AppError, platform::TargetApplication};
 
-    fn target() -> FrontmostApp {
-        FrontmostApp {
+    fn target() -> TargetApplication {
+        TargetApplication {
             pid: 42,
             name: "Target".into(),
-            bundle_id: Some("com.example.target".into()),
+            identifier: Some("com.example.target".into()),
+            #[cfg(target_os = "windows")]
+            window_handle: 42,
         }
     }
 
     #[test]
-    fn paste_preconditions_reject_missing_accessibility_before_any_paste_work() {
+    fn paste_preconditions_reject_missing_automation_access_before_any_paste_work() {
         assert!(matches!(
             validate_paste_target(false, Some(target())),
             Err(AppError::PermissionDenied)

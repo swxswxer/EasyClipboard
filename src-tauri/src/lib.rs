@@ -1,10 +1,10 @@
 mod app_state;
-mod clipboard;
 mod commands;
 mod database;
+mod domain;
 mod error;
 mod models;
-mod native_macos;
+mod platform;
 mod windowing;
 
 use std::time::{Duration, Instant};
@@ -16,7 +16,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 
 pub fn run() {
     let shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
-        .with_shortcut("Command+Shift+V")
+        .with_shortcut(platform::DEFAULT_SHORTCUT)
         .expect("default shortcut should be valid")
         .with_handler(|app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
@@ -56,10 +56,10 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::set_global_shortcut,
-            commands::get_permission_state,
+            commands::get_desktop_capabilities,
             commands::start_recording,
-            commands::request_accessibility,
-            commands::open_accessibility_settings,
+            commands::request_paste_automation_access,
+            commands::open_paste_automation_settings,
             commands::pick_excluded_app,
             commands::hide_panel,
             commands::close_settings,
@@ -75,24 +75,26 @@ pub fn run() {
             let database = tauri::async_runtime::block_on(Database::open(&app_data_dir))
                 .map_err(|error| error.to_string())?;
             if let Ok(settings) = tauri::async_runtime::block_on(database.get_settings()) {
-                if settings.shortcut != "Command+Shift+V" {
+                if settings.shortcut != platform::DEFAULT_SHORTCUT {
                     let manager = app.global_shortcut();
                     if manager.unregister_all().is_err()
                         || manager.register(settings.shortcut.as_str()).is_err()
                     {
                         let _ = manager.unregister_all();
-                        let _ = manager.register("Command+Shift+V");
+                        let _ = manager.register(platform::DEFAULT_SHORTCUT);
                         log::warn!("saved shortcut could not be restored");
                     }
                 }
             }
-            let runtime = RuntimeState::new(clipboard::change_count());
+            let runtime = RuntimeState::new(platform::change_token());
             app.manage(AppState {
                 database,
                 runtime: std::sync::Mutex::new(runtime),
             });
             setup_tray(app)?;
-            spawn_clipboard_monitor(app.handle().clone());
+            let (change_sender, change_receiver) = tokio::sync::mpsc::unbounded_channel();
+            platform::install_clipboard_listener(change_sender)?;
+            spawn_clipboard_monitor(app.handle().clone(), change_receiver);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -119,7 +121,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .expect("Tauri app icon should be configured");
     TrayIconBuilder::with_id("main")
         .icon(icon)
-        .icon_as_template(true)
+        .icon_as_template(cfg!(target_os = "macos"))
         .tooltip("EasyClipboard")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -149,7 +151,14 @@ fn toggle_recording(app: AppHandle) {
     });
 }
 
-fn spawn_clipboard_monitor(app: AppHandle) {
+fn spawn_clipboard_monitor(
+    app: AppHandle,
+    change_receiver: tokio::sync::mpsc::UnboundedReceiver<()>,
+) {
+    #[cfg(target_os = "windows")]
+    let mut change_receiver = change_receiver;
+    #[cfg(target_os = "macos")]
+    let _change_receiver = change_receiver;
     tauri::async_runtime::spawn(async move {
         let mut last_cleanup = Instant::now() - Duration::from_secs(86_400);
         loop {
@@ -172,7 +181,7 @@ fn spawn_clipboard_monitor(app: AppHandle) {
                 last_cleanup = Instant::now();
             }
 
-            let (started, idle_for) = app
+            let (started, _idle_for) = app
                 .state::<AppState>()
                 .runtime
                 .lock()
@@ -187,42 +196,35 @@ fn spawn_clipboard_monitor(app: AppHandle) {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
-            if !native_macos::accessibility_trusted(false) {
+            if !platform::paste_automation_ready() {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
 
-            let count = clipboard::change_count();
+            let count = platform::change_token();
             let now = Instant::now();
-            let suppress_by_count = {
+            let should_capture = {
                 let app_state = app.state::<AppState>();
                 let Ok(mut runtime) = app_state.runtime.lock() else {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 };
-                if count == runtime.last_change_count {
-                    false
-                } else {
-                    runtime.last_change_count = count;
-                    runtime.last_clipboard_change = now;
-                    runtime.suppress_change_count == Some(count) && now <= runtime.suppress_until
-                }
+                runtime.should_capture_change(count, now)
             };
 
-            if !suppress_by_count {
-                let source = native_macos::frontmost_app().unwrap_or(native_macos::FrontmostApp {
-                    pid: 0,
-                    name: "未知应用".into(),
-                    bundle_id: None,
-                });
-                let excluded = source.bundle_id.as_ref().is_some_and(|bundle_id| {
-                    settings
-                        .excluded_apps
-                        .iter()
-                        .any(|app| &app.bundle_id == bundle_id)
-                });
+            if should_capture {
+                let source =
+                    platform::frontmost_application().unwrap_or(platform::TargetApplication {
+                        pid: 0,
+                        name: "未知应用".into(),
+                        identifier: None,
+                        #[cfg(target_os = "windows")]
+                        window_handle: 0,
+                    });
+                let excluded =
+                    platform::source_is_excluded(&settings, source.identifier.as_deref());
                 if !excluded {
-                    match clipboard::read_capture(source) {
+                    match platform::read_capture(source) {
                         Ok(Some(captured)) => {
                             let suppress_by_hash = app
                                 .state::<AppState>()
@@ -247,12 +249,18 @@ fn spawn_clipboard_monitor(app: AppHandle) {
                     }
                 }
             }
-            let interval = if idle_for >= Duration::from_secs(60) {
+            #[cfg(target_os = "macos")]
+            let interval = if _idle_for >= Duration::from_secs(60) {
                 Duration::from_secs(1)
             } else {
                 Duration::from_millis(500)
             };
+            #[cfg(target_os = "macos")]
             tokio::time::sleep(interval).await;
+            #[cfg(target_os = "windows")]
+            {
+                let _ = change_receiver.recv().await;
+            }
         }
     });
 }

@@ -6,7 +6,7 @@ import type { ClipboardItemSummary } from "../types";
 
 const olderPinned: ClipboardItemSummary = {
   id: "older", kind: "text", title: "较早的固定内容", sourceName: "Notes",
-  sourceBundleId: "com.apple.Notes", copiedAt: "2026-08-17T08:00:00.000Z", byteSize: 12,
+  sourceAppId: "com.apple.Notes", copiedAt: "2026-08-17T08:00:00.000Z", byteSize: 12,
   pinned: true, groupId: null, retained: true, missingFiles: false,
 };
 
@@ -21,12 +21,12 @@ function props(overrides: Partial<ComponentProps<typeof ClipboardPanel>> = {}): 
   return {
     groups, items: [olderPinned, newest], activeGroup: "recent", query: "", selectedId: null, detail: null,
     dialog: null, menu: null, toast: null, nextCursor: null, loading: false, recordingPaused: false,
-    permission: { clipboard: "authorized", accessibility: true }, searchFocusRequest: 0, onSetActiveGroup: vi.fn(), onSetQuery: vi.fn(),
+    permission: { platform: "macos", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: true }, searchFocusRequest: 0, onSetActiveGroup: vi.fn(), onSetQuery: vi.fn(),
     onSelect: vi.fn(), onOpenDialog: vi.fn(), onCloseDialog: vi.fn(), onSubmitDialog: vi.fn(),
     onConfirmDelete: vi.fn(), onToggleMoveMenu: vi.fn(), onMoveItem: vi.fn(), onTogglePin: vi.fn(),
     onDeleteItem: vi.fn(), onPaste: vi.fn(), onClosePanel: vi.fn(), onLoadMore: vi.fn(),
-    onToggleRecording: vi.fn(), onStartRecording: vi.fn(), onRequestAccessibility: vi.fn(),
-    onOpenAccessibilitySettings: vi.fn(), ...overrides,
+    onToggleRecording: vi.fn(), onStartRecording: vi.fn(), onRequestPasteAutomationAccess: vi.fn(),
+    onOpenPasteAutomationSettings: vi.fn(), ...overrides,
   };
 }
 
@@ -133,7 +133,7 @@ describe("ClipboardPanel", () => {
   it("blocks panel shortcuts without accessibility permission", () => {
     const onSelect = vi.fn();
     const onPaste = vi.fn();
-    render(<ClipboardPanel {...props({ permission: { clipboard: "authorized", accessibility: false }, onSelect, onPaste })} />);
+    render(<ClipboardPanel {...props({ permission: { platform: "macos", clipboardAccess: "ready", pasteAutomation: "permission_required", supportsAppExclusions: true }, onSelect, onPaste })} />);
     expect(screen.getByRole("alertdialog")).toHaveTextContent("需要开启辅助功能");
     onSelect.mockClear();
     fireEvent.keyDown(screen.getByLabelText("搜索剪贴板"), { key: "ArrowDown", code: "ArrowDown" });

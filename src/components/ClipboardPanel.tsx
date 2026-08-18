@@ -4,7 +4,7 @@ import {
   ImageSquare, Infinity as InfinityIcon, MagnifyingGlass, Pause, Play,
   Plus, PushPin, ShieldCheck, TextT, Trash, X,
 } from "@phosphor-icons/react";
-import type { ClipboardItemDetail, ClipboardItemSummary, Group, PermissionState } from "../types";
+import type { ClipboardItemDetail, ClipboardItemSummary, Group, DesktopCapabilities } from "../types";
 
 export type PanelDialogState = { mode: "create" | "rename" | "delete" | "delete_item"; groupId?: string; itemId?: string; initialName?: string } | null;
 export type MenuState = { type: "move"; itemId: string } | null;
@@ -22,7 +22,7 @@ interface ClipboardPanelProps {
   nextCursor: string | null;
   loading: boolean;
   recordingPaused: boolean;
-  permission: PermissionState | null;
+  permission: DesktopCapabilities | null;
   searchFocusRequest: number;
   onSetActiveGroup: (id: string) => void;
   onSetQuery: (value: string) => void;
@@ -40,8 +40,8 @@ interface ClipboardPanelProps {
   onLoadMore: () => void;
   onToggleRecording: () => void;
   onStartRecording: () => void;
-  onRequestAccessibility: () => void;
-  onOpenAccessibilitySettings: () => void;
+  onRequestPasteAutomationAccess: () => void;
+  onOpenPasteAutomationSettings: () => void;
 }
 
 function KeyHint({ label, icon: Icon }: { label?: string; icon?: typeof ArrowUp }) {
@@ -105,7 +105,7 @@ function Preview({ detail }: { detail: ClipboardItemDetail | null }) {
       {detail.kind === "image" && detail.previewDataUrl && <img className="preview-image" src={detail.previewDataUrl} alt="剪贴板图片预览" />}
       {detail.kind === "files" ? (
         <div className="file-preview">
-          {detail.files.map((file) => <span key={file}><File />{file.split("/").pop()}</span>)}
+          {detail.files.map((file) => <span key={file}><File />{file.split(/[\\/]/).pop()}</span>)}
         </div>
       ) : (
         <div className="preview-copy">{detail.content || detail.title}</div>
@@ -131,11 +131,11 @@ export function ClipboardPanel(props: ClipboardPanelProps) {
   useEffect(() => { if (selected && selected.id !== props.selectedId) props.onSelect(selected.id); }, [selected?.id, props.selectedId]);
 
   useLayoutEffect(() => {
-    if (props.permission?.accessibility !== true || props.permission.clipboard !== "authorized") return;
+    if (props.permission?.pasteAutomation !== "ready" || props.permission.clipboardAccess !== "ready") return;
     tabNavigationActive.current = false;
     const frame = window.requestAnimationFrame(() => searchInputRef.current?.focus({ preventScroll: true }));
     return () => window.cancelAnimationFrame(frame);
-  }, [props.searchFocusRequest, props.permission?.accessibility, props.permission?.clipboard]);
+  }, [props.searchFocusRequest, props.permission?.pasteAutomation, props.permission?.clipboardAccess]);
 
   useLayoutEffect(() => {
     if (!selected) return;
@@ -162,7 +162,7 @@ export function ClipboardPanel(props: ClipboardPanelProps) {
         if (event.key === "Escape") { event.preventDefault(); currentProps.onCloseDialog(); }
         return;
       }
-      if (currentProps.menu || currentProps.permission?.accessibility !== true || currentProps.permission.clipboard !== "authorized") return;
+      if (currentProps.menu || currentProps.permission?.pasteAutomation !== "ready" || currentProps.permission.clipboardAccess !== "ready") return;
       const searchFocused = Boolean(target?.matches('input[aria-label="搜索剪贴板"]'));
       const rowFocused = Boolean(target?.closest(".item-row"));
       const tabFocusedControl = tabNavigationActive.current
@@ -270,10 +270,10 @@ export function ClipboardPanel(props: ClipboardPanelProps) {
       {props.permission === null && (
         <div className="dialog-backdrop"><div className="permission-card loading-permission" role="status"><div className="permission-icon"><ShieldCheck /></div><h2>正在检查系统权限…</h2></div></div>
       )}
-      {props.permission && !props.permission.accessibility && (
-        <div className="dialog-backdrop"><div className="permission-card" role="alertdialog" aria-modal="true"><div className="permission-icon"><ShieldCheck /></div><h2>需要开启辅助功能</h2><p>EasyClipboard 必须取得辅助功能权限，才能记录历史、切回目标应用并完成粘贴。</p><div className="permission-actions"><button className="button primary" onClick={props.onRequestAccessibility}>开启辅助功能</button><button className="button secondary" onClick={props.onOpenAccessibilitySettings}>打开系统设置</button></div></div></div>
+      {props.permission?.pasteAutomation === "permission_required" && (
+        <div className="dialog-backdrop"><div className="permission-card" role="alertdialog" aria-modal="true"><div className="permission-icon"><ShieldCheck /></div><h2>需要开启辅助功能</h2><p>EasyClipboard 必须取得辅助功能权限，才能记录历史、切回目标应用并完成粘贴。</p><div className="permission-actions"><button className="button primary" onClick={props.onRequestPasteAutomationAccess}>开启辅助功能</button><button className="button secondary" onClick={props.onOpenPasteAutomationSettings}>打开系统设置</button></div></div></div>
       )}
-      {props.permission?.accessibility && props.permission.clipboard === "not_requested" && (
+      {props.permission?.pasteAutomation === "ready" && props.permission.clipboardAccess === "not_requested" && (
         <div className="dialog-backdrop"><div className="permission-card"><div className="permission-icon"><TextT /></div><h2>开始记录剪贴板</h2><p>EasyClipboard 只在本机保存你复制的内容。密码管理器和带敏感标记的内容会被自动忽略。</p><button className="button primary" onClick={props.onStartRecording}>开始记录</button></div></div>
       )}
       {props.dialog && <PanelDialog state={props.dialog} onCancel={props.onCloseDialog} onSubmit={props.onSubmitDialog} onDelete={props.onConfirmDelete} />}

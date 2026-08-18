@@ -48,4 +48,20 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(deleteAllData).toHaveBeenCalledOnce());
     expect(await screen.findByText("全部本地数据已删除")).toBeInTheDocument();
   });
+
+  it("uses Windows shortcut labels and hides macOS-only settings", async () => {
+    const repository = new TestClipboardRepository();
+    vi.spyOn(repository, "getDesktopCapabilities").mockResolvedValue({
+      platform: "windows", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: false,
+    });
+    vi.spyOn(repository, "getSettings").mockResolvedValue({
+      shortcut: "Control+Shift+V", launchAtLogin: false, recordingPaused: false,
+      maxItems: 500, retentionDays: 30, excludedApps: [],
+    });
+    render(<SettingsPage repository={repository} />);
+    expect(await screen.findByRole("button", { name: "Ctrl Shift V" })).toBeInTheDocument();
+    expect(screen.queryByText("辅助功能权限")).not.toBeInTheDocument();
+    expect(screen.queryByText("排除应用")).not.toBeInTheDocument();
+    expect(screen.getByText(/系统托盘/)).toBeInTheDocument();
+  });
 });

@@ -14,7 +14,7 @@ export interface ClipboardItemSummary {
   kind: ClipboardKind;
   title: string;
   sourceName: string;
-  sourceBundleId: string | null;
+  sourceAppId: string | null;
   copiedAt: string;
   byteSize: number;
   pinned: boolean;
@@ -43,7 +43,7 @@ export interface Group {
 
 export interface ExcludedApp {
   name: string;
-  bundleId: string;
+  identifier: string;
 }
 
 export interface Settings {
@@ -55,9 +55,18 @@ export interface Settings {
   excludedApps: ExcludedApp[];
 }
 
-export interface PermissionState {
-  clipboard: "not_requested" | "authorized" | "denied";
-  accessibility: boolean;
+export type DesktopPlatform = "macos" | "windows";
+
+export interface DesktopCapabilities {
+  platform: DesktopPlatform;
+  clipboardAccess: "not_requested" | "ready" | "denied";
+  pasteAutomation: "ready" | "permission_required";
+  supportsAppExclusions: boolean;
+}
+
+export interface PasteOutcome {
+  mode: "pasted" | "manual_required";
+  reason?: "elevated_target" | "focus_denied" | "input_blocked";
 }
 
 export interface RepositoryErrorShape {

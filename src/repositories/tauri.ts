@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ClipboardRepository, ListItemsOptions } from "../repository";
 import type {
-  ClipboardItemDetail, ClipboardPage, ExcludedApp, Group, PermissionState, Settings,
+  ClipboardItemDetail, ClipboardPage, ExcludedApp, Group, DesktopCapabilities, PasteOutcome, Settings,
 } from "../types";
 import { RepositoryError, type RepositoryErrorShape } from "../types";
 
@@ -25,7 +25,7 @@ export class TauriClipboardRepository implements ClipboardRepository {
     });
   }
   getItem(id: string): Promise<ClipboardItemDetail> { return call("get_item", { id }); }
-  pasteItem(id: string): Promise<void> { return call("paste_item", { id }); }
+  pasteItem(id: string): Promise<PasteOutcome> { return call("paste_item", { id }); }
   deleteItem(id: string): Promise<void> { return call("delete_item", { id }); }
   clearRecent(): Promise<void> { return call("clear_recent"); }
   deleteAllData(): Promise<void> { return call("delete_all_data"); }
@@ -41,11 +41,11 @@ export class TauriClipboardRepository implements ClipboardRepository {
     return call("update_settings", { settings: { ...current, ...patch } });
   }
   setGlobalShortcut(shortcut: string): Promise<Settings> { return call("set_global_shortcut", { shortcut }); }
-  getPermissionState(): Promise<PermissionState> { return call("get_permission_state"); }
-  requestAccessibility(): Promise<PermissionState> { return call("request_accessibility"); }
-  openAccessibilitySettings(): Promise<void> { return call("open_accessibility_settings"); }
+  getDesktopCapabilities(): Promise<DesktopCapabilities> { return call("get_desktop_capabilities"); }
+  requestPasteAutomationAccess(): Promise<DesktopCapabilities> { return call("request_paste_automation_access"); }
+  openPasteAutomationSettings(): Promise<void> { return call("open_paste_automation_settings"); }
   pickExcludedApp(): Promise<ExcludedApp | null> { return call("pick_excluded_app"); }
-  startRecording(): Promise<PermissionState> { return call("start_recording"); }
+  startRecording(): Promise<DesktopCapabilities> { return call("start_recording"); }
   hidePanel(): Promise<void> { return call("hide_panel"); }
   closeSettings(): Promise<void> { return call("close_settings"); }
   async subscribeChanged(callback: () => void): Promise<() => void> {

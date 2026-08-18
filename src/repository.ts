@@ -3,7 +3,8 @@ import type {
   ClipboardPage,
   ExcludedApp,
   Group,
-  PermissionState,
+  DesktopCapabilities,
+  PasteOutcome,
   Settings,
 } from "./types";
 
@@ -17,7 +18,7 @@ export interface ListItemsOptions {
 export interface ClipboardRepository {
   listItems(options: ListItemsOptions): Promise<ClipboardPage>;
   getItem(id: string): Promise<ClipboardItemDetail>;
-  pasteItem(id: string): Promise<void>;
+  pasteItem(id: string): Promise<PasteOutcome>;
   deleteItem(id: string): Promise<void>;
   clearRecent(): Promise<void>;
   deleteAllData(): Promise<void>;
@@ -30,11 +31,11 @@ export interface ClipboardRepository {
   getSettings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
   setGlobalShortcut(shortcut: string): Promise<Settings>;
-  getPermissionState(): Promise<PermissionState>;
-  requestAccessibility(): Promise<PermissionState>;
-  openAccessibilitySettings(): Promise<void>;
+  getDesktopCapabilities(): Promise<DesktopCapabilities>;
+  requestPasteAutomationAccess(): Promise<DesktopCapabilities>;
+  openPasteAutomationSettings(): Promise<void>;
   pickExcludedApp(): Promise<ExcludedApp | null>;
-  startRecording(): Promise<PermissionState>;
+  startRecording(): Promise<DesktopCapabilities>;
   hidePanel(): Promise<void>;
   closeSettings(): Promise<void>;
   subscribeChanged(callback: () => void): Promise<() => void>;

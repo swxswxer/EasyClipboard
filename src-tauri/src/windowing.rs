@@ -1,11 +1,8 @@
 use tauri::{
-    window::{Effect, EffectState, EffectsBuilder},
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
 };
 
-use crate::{app_state::AppState, error::AppError, native_macos};
-
-const APP_BUNDLE_ID: &str = "com.easyclipboard.desktop";
+use crate::{app_state::AppState, error::AppError, platform};
 
 pub fn toggle_clipboard(app: &AppHandle) -> Result<(), AppError> {
     let window = app
@@ -26,8 +23,8 @@ pub fn show_clipboard(app: &AppHandle) -> Result<(), AppError> {
         .get_webview_window("clipboard")
         .ok_or(AppError::ClipboardUnavailable)?;
 
-    if let Some(frontmost) = native_macos::frontmost_app() {
-        if frontmost.bundle_id.as_deref() != Some(APP_BUNDLE_ID) {
+    if let Some(frontmost) = platform::frontmost_application() {
+        if !platform::is_own_identifier(frontmost.identifier.as_deref()) {
             if let Ok(mut runtime) = app.state::<AppState>().runtime.lock() {
                 runtime.target_app = Some(frontmost);
             }
@@ -84,11 +81,6 @@ pub fn open_settings(app: &AppHandle) -> Result<(), AppError> {
         let _ = window.set_focus();
         return Ok(());
     }
-    let effects = EffectsBuilder::new()
-        .effect(Effect::HudWindow)
-        .state(EffectState::Active)
-        .radius(18.0)
-        .build();
     WebviewWindowBuilder::new(
         app,
         "settings",
@@ -103,7 +95,8 @@ pub fn open_settings(app: &AppHandle) -> Result<(), AppError> {
     .decorations(false)
     .transparent(true)
     .shadow(true)
-    .effects(effects)
+    .effects(platform::window_effects())
+    .skip_taskbar(cfg!(target_os = "windows"))
     .center()
     .build()
     .map_err(|error| AppError::Storage(error.to_string()))?;

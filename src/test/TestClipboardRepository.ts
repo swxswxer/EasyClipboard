@@ -4,7 +4,8 @@ import type {
   ClipboardPage,
   ExcludedApp,
   Group,
-  PermissionState,
+  DesktopCapabilities,
+  PasteOutcome,
   Settings,
 } from "../types";
 import { RepositoryError } from "../types";
@@ -20,39 +21,39 @@ const initialGroups: Group[] = [
 const initialItems: ClipboardItemDetail[] = [
   {
     id: "1", kind: "text", title: "收到，我整理后今天发给你。", content: "收到，我整理后今天发给你。",
-    sourceName: "微信", sourceBundleId: "com.tencent.xinWeChat", copiedAt: iso(0), byteSize: 42,
+    sourceName: "微信", sourceAppId: "com.tencent.xinWeChat", copiedAt: iso(0), byteSize: 42,
     groupId: "common", pinned: true, retained: true, missingFiles: false, previewDataUrl: null, files: [],
   },
   {
     id: "2", kind: "text", title: "MVP 只保留基础剪贴板功能", content: "MVP 支持 macOS，本地保存剪贴板历史。",
-    sourceName: "VS Code", sourceBundleId: "com.microsoft.VSCode", copiedAt: iso(1), byteSize: 58,
+    sourceName: "VS Code", sourceAppId: "com.microsoft.VSCode", copiedAt: iso(1), byteSize: 58,
     groupId: null, pinned: false, retained: false, missingFiles: false, previewDataUrl: null, files: [],
   },
   {
     id: "3", kind: "files", title: "Tauri 跨平台剪贴板开发计划.md", content: "",
-    sourceName: "Finder", sourceBundleId: "com.apple.finder", copiedAt: iso(3), byteSize: 18_432,
+    sourceName: "Finder", sourceAppId: "com.apple.finder", copiedAt: iso(3), byteSize: 18_432,
     groupId: null, pinned: false, retained: false, missingFiles: false, previewDataUrl: null,
     files: ["/Users/example/Documents/Tauri 跨平台剪贴板开发计划.md"],
   },
   {
     id: "4", kind: "image", title: "界面草图.png", content: "PNG 图像 · 1488 × 1058\n1.8 MB",
-    sourceName: "截图", sourceBundleId: "com.apple.screencaptureui", copiedAt: iso(7), byteSize: 1_800_000,
+    sourceName: "截图", sourceAppId: "com.apple.screencaptureui", copiedAt: iso(7), byteSize: 1_800_000,
     groupId: null, pinned: false, retained: false, missingFiles: false,
     previewDataUrl: null, files: [],
   },
   {
     id: "5", kind: "text", title: "https://tauri.app/", content: "https://tauri.app/",
-    sourceName: "Safari", sourceBundleId: "com.apple.Safari", copiedAt: iso(12), byteSize: 18,
+    sourceName: "Safari", sourceAppId: "com.apple.Safari", copiedAt: iso(12), byteSize: 18,
     groupId: "code", pinned: false, retained: true, missingFiles: false, previewDataUrl: null, files: [],
   },
   {
     id: "6", kind: "text", title: "窗口毛玻璃配置", content: "setFrostedGlass({\n  blur: 36,\n  opacity: 0.72\n});",
-    sourceName: "VS Code", sourceBundleId: "com.microsoft.VSCode", copiedAt: iso(18), byteSize: 68,
+    sourceName: "VS Code", sourceAppId: "com.microsoft.VSCode", copiedAt: iso(18), byteSize: 68,
     groupId: "code", pinned: false, retained: true, missingFiles: false, previewDataUrl: null, files: [],
   },
   {
     id: "7", kind: "text", title: "好的，感谢同步进度。", content: "好的，感谢同步进度。有变化随时告诉我。",
-    sourceName: "企业微信", sourceBundleId: "com.tencent.WeWorkMac", copiedAt: iso(1_440), byteSize: 54,
+    sourceName: "企业微信", sourceAppId: "com.tencent.WeWorkMac", copiedAt: iso(1_440), byteSize: 54,
     groupId: "common", pinned: false, retained: true, missingFiles: false, previewDataUrl: null, files: [],
   },
 ];
@@ -64,11 +65,11 @@ const defaultSettings: Settings = {
   maxItems: 500,
   retentionDays: 30,
   excludedApps: [
-    { name: "EasyClipboard", bundleId: "com.easyclipboard.desktop" },
-    { name: "1Password", bundleId: "com.1password.1password" },
-    { name: "Bitwarden", bundleId: "com.bitwarden.desktop" },
-    { name: "KeePassXC", bundleId: "org.keepassxc.keepassxc" },
-    { name: "Passwords", bundleId: "com.apple.Passwords" },
+    { name: "EasyClipboard", identifier: "com.easyclipboard.desktop" },
+    { name: "1Password", identifier: "com.1password.1password" },
+    { name: "Bitwarden", identifier: "com.bitwarden.desktop" },
+    { name: "KeePassXC", identifier: "org.keepassxc.keepassxc" },
+    { name: "Passwords", identifier: "com.apple.Passwords" },
   ],
 };
 
@@ -102,11 +103,12 @@ export class TestClipboardRepository implements ClipboardRepository {
     return structuredClone(item);
   }
 
-  async pasteItem(id: string): Promise<void> {
+  async pasteItem(id: string): Promise<PasteOutcome> {
     const newestTime = this.items.reduce((latest, item) => Math.max(latest, new Date(item.copiedAt).getTime()), 0);
     const copiedAt = new Date(Math.max(Date.now(), newestTime + 1)).toISOString();
     this.items = this.items.map((item) => item.id === id ? { ...item, copiedAt } : item);
     this.changed();
+    return { mode: "pasted" };
   }
   async deleteItem(id: string) { this.items = this.items.filter((item) => item.id !== id); this.changed(); }
   async clearRecent() { this.items = this.items.filter((item) => item.groupId || item.pinned); this.changed(); }
@@ -127,11 +129,11 @@ export class TestClipboardRepository implements ClipboardRepository {
   async getSettings() { return structuredClone(this.settings); }
   async updateSettings(patch: Partial<Settings>) { this.settings = { ...this.settings, ...patch }; return this.getSettings(); }
   async setGlobalShortcut(shortcut: string) { this.settings.shortcut = shortcut; return this.getSettings(); }
-  async getPermissionState(): Promise<PermissionState> { return { clipboard: "authorized", accessibility: true }; }
-  async requestAccessibility(): Promise<PermissionState> { return { clipboard: "authorized", accessibility: true }; }
-  async openAccessibilitySettings() {}
-  async pickExcludedApp(): Promise<ExcludedApp | null> { return { name: "示例应用", bundleId: "com.example.app" }; }
-  async startRecording(): Promise<PermissionState> { return { clipboard: "authorized", accessibility: true }; }
+  async getDesktopCapabilities(): Promise<DesktopCapabilities> { return { platform: "macos", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: true }; }
+  async requestPasteAutomationAccess(): Promise<DesktopCapabilities> { return { platform: "macos", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: true }; }
+  async openPasteAutomationSettings() {}
+  async pickExcludedApp(): Promise<ExcludedApp | null> { return { name: "示例应用", identifier: "com.example.app" }; }
+  async startRecording(): Promise<DesktopCapabilities> { return { platform: "macos", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: true }; }
   async hidePanel() {}
   async closeSettings() { window.location.search = ""; }
   async subscribeChanged(callback: () => void) { this.callbacks.add(callback); return () => this.callbacks.delete(callback); }
