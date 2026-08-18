@@ -1,0 +1,29 @@
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+src-tauri/target/
+src-tauri/gen/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Editor-local state
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
