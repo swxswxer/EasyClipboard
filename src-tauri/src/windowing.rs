@@ -94,7 +94,9 @@ pub fn open_settings(app: &AppHandle) -> Result<(), AppError> {
     .minimizable(false)
     .decorations(false)
     .transparent(true)
-    .shadow(true)
+    // DWM draws a rectangular shadow around transparent undecorated windows.
+    // On Windows that appears as clipped bars along the right and bottom edges.
+    .shadow(cfg!(target_os = "macos"))
     .effects(platform::window_effects())
     .skip_taskbar(cfg!(target_os = "windows"))
     .center()

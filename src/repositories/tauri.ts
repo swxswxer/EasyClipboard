@@ -48,10 +48,11 @@ export class TauriClipboardRepository implements ClipboardRepository {
   startRecording(): Promise<DesktopCapabilities> { return call("start_recording"); }
   hidePanel(): Promise<void> { return call("hide_panel"); }
   closeSettings(): Promise<void> { return call("close_settings"); }
-  async subscribeChanged(callback: () => void): Promise<() => void> {
-    const unlistenClipboard = await listen("clipboard://changed", callback);
-    const unlistenSettings = await listen("settings://changed", callback);
-    return () => { unlistenClipboard(); unlistenSettings(); };
+  subscribeChanged(callback: () => void): Promise<() => void> {
+    return listen("clipboard://changed", callback);
+  }
+  subscribeSettingsChanged(callback: () => void): Promise<() => void> {
+    return listen("settings://changed", callback);
   }
   subscribePanelShown(callback: () => void): Promise<() => void> {
     return listen("clipboard://shown", callback);

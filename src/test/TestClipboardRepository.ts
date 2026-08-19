@@ -78,12 +78,14 @@ export class TestClipboardRepository implements ClipboardRepository {
   private items = structuredClone(initialItems);
   private settings = structuredClone(defaultSettings);
   private callbacks = new Set<() => void>();
+  private settingsCallbacks = new Set<() => void>();
 
   reset() {
     this.groups = structuredClone(initialGroups);
     this.items = structuredClone(initialItems);
     this.settings = structuredClone(defaultSettings);
     this.callbacks.clear();
+    this.settingsCallbacks.clear();
   }
 
   async listItems({ query = "", groupId = null, cursor = null, limit = 100 }: ListItemsOptions): Promise<ClipboardPage> {
@@ -112,7 +114,13 @@ export class TestClipboardRepository implements ClipboardRepository {
   }
   async deleteItem(id: string) { this.items = this.items.filter((item) => item.id !== id); this.changed(); }
   async clearRecent() { this.items = this.items.filter((item) => item.groupId || item.pinned); this.changed(); }
-  async deleteAllData() { this.items = []; this.groups = []; this.settings = structuredClone(defaultSettings); this.changed(); }
+  async deleteAllData() {
+    this.items = [];
+    this.groups = [];
+    this.settings = structuredClone(defaultSettings);
+    this.changed();
+    this.settingsChanged();
+  }
   async setPinned(id: string, pinned: boolean) { this.mutate(id, (item) => ({ ...item, pinned, retained: pinned || Boolean(item.groupId) })); }
   async listGroups() { return structuredClone(this.groups); }
   async createGroup(name: string) {
@@ -127,8 +135,16 @@ export class TestClipboardRepository implements ClipboardRepository {
   }
   async moveItem(itemId: string, groupId: string | null) { this.mutate(itemId, (item) => ({ ...item, groupId, retained: item.pinned || Boolean(groupId) })); }
   async getSettings() { return structuredClone(this.settings); }
-  async updateSettings(patch: Partial<Settings>) { this.settings = { ...this.settings, ...patch }; return this.getSettings(); }
-  async setGlobalShortcut(shortcut: string) { this.settings.shortcut = shortcut; return this.getSettings(); }
+  async updateSettings(patch: Partial<Settings>) {
+    this.settings = { ...this.settings, ...patch };
+    this.settingsChanged();
+    return this.getSettings();
+  }
+  async setGlobalShortcut(shortcut: string) {
+    this.settings.shortcut = shortcut;
+    this.settingsChanged();
+    return this.getSettings();
+  }
   async getDesktopCapabilities(): Promise<DesktopCapabilities> { return { platform: "macos", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: true }; }
   async requestPasteAutomationAccess(): Promise<DesktopCapabilities> { return { platform: "macos", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: true }; }
   async openPasteAutomationSettings() {}
@@ -137,6 +153,7 @@ export class TestClipboardRepository implements ClipboardRepository {
   async hidePanel() {}
   async closeSettings() { window.location.search = ""; }
   async subscribeChanged(callback: () => void) { this.callbacks.add(callback); return () => this.callbacks.delete(callback); }
+  async subscribeSettingsChanged(callback: () => void) { this.settingsCallbacks.add(callback); return () => this.settingsCallbacks.delete(callback); }
   async subscribePanelShown() { return () => {}; }
 
   private mutate(id: string, update: (item: ClipboardItemDetail) => ClipboardItemDetail) {
@@ -144,4 +161,5 @@ export class TestClipboardRepository implements ClipboardRepository {
     this.changed();
   }
   private changed() { for (const callback of this.callbacks) callback(); }
+  private settingsChanged() { for (const callback of this.settingsCallbacks) callback(); }
 }

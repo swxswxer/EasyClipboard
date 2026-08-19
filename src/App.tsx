@@ -87,10 +87,8 @@ function ClipboardApp() {
     catch (error) { notify(errorText(error)); }
   }, [notify]);
 
-  const refreshRef = useRef(refresh);
   const loadRef = useRef(load);
   const refreshPermissionRef = useRef(refreshPermission);
-  useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   useEffect(() => { loadRef.current = load; }, [load]);
   useEffect(() => { refreshPermissionRef.current = refreshPermission; }, [refreshPermission]);
 
@@ -107,7 +105,24 @@ function ClipboardApp() {
   useEffect(() => {
     let disposed = false;
     let cleanup: (() => void) | undefined;
-    void repository.subscribeChanged(() => void refreshRef.current()).then((value) => {
+    // A clipboard event only invalidates the item page. Avoid reloading groups,
+    // settings and desktop capabilities for every WM_CLIPBOARDUPDATE on Windows.
+    void repository.subscribeChanged(() => void loadRef.current(false)).then((value) => {
+      if (disposed) value(); else cleanup = value;
+    }).catch((error) => { if (!disposed) notify(errorText(error)); });
+    return () => { disposed = true; cleanup?.(); };
+  }, [notify]);
+
+  useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | undefined;
+    void repository.subscribeSettingsChanged(() => {
+      void repository.getSettings().then((next) => {
+        if (!disposed) setSettings(next);
+      }).catch((error) => {
+        if (!disposed) notify(errorText(error));
+      });
+    }).then((value) => {
       if (disposed) value(); else cleanup = value;
     }).catch((error) => { if (!disposed) notify(errorText(error)); });
     return () => { disposed = true; cleanup?.(); };

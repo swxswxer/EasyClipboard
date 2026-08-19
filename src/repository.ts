@@ -39,5 +39,6 @@ export interface ClipboardRepository {
   hidePanel(): Promise<void>;
   closeSettings(): Promise<void>;
   subscribeChanged(callback: () => void): Promise<() => void>;
+  subscribeSettingsChanged(callback: () => void): Promise<() => void>;
   subscribePanelShown(callback: () => void): Promise<() => void>;
 }
