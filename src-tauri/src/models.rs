@@ -157,10 +157,18 @@ mod tests {
             "excludedApps":[]
         }"#;
         let settings: Settings = serde_json::from_str(legacy).unwrap();
-        assert_eq!(settings.shortcut, crate::platform::DEFAULT_SHORTCUT);
+        assert_eq!(settings.shortcut, "Command+Shift+V");
         assert_eq!(
             serde_json::to_value(settings).unwrap()["autoPasteEnabled"],
             serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn new_settings_use_the_platform_default_shortcut() {
+        assert_eq!(
+            Settings::default().shortcut,
+            crate::platform::DEFAULT_SHORTCUT
         );
     }
 
