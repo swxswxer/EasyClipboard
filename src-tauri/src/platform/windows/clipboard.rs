@@ -17,8 +17,9 @@ use windows::{
         System::{
             DataExchange::{
                 AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
-                GetClipboardSequenceNumber, IsClipboardFormatAvailable, OpenClipboard,
-                RegisterClipboardFormatW, RemoveClipboardFormatListener, SetClipboardData,
+                GetClipboardSequenceNumber, GetOpenClipboardWindow, IsClipboardFormatAvailable,
+                OpenClipboard, RegisterClipboardFormatW, RemoveClipboardFormatListener,
+                SetClipboardData,
             },
             LibraryLoader::GetModuleHandleW,
             Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
@@ -27,9 +28,8 @@ use windows::{
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW,
-                GetOpenClipboardWindow, GetWindowThreadProcessId, RegisterClassW, TranslateMessage,
-                CS_HREDRAW, CS_VREDRAW, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE,
-                WM_CLIPBOARDUPDATE, WNDCLASSW,
+                GetWindowThreadProcessId, RegisterClassW, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
+                HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLIPBOARDUPDATE, WNDCLASSW,
             },
         },
     },
@@ -71,9 +71,9 @@ impl ClipboardGuard {
                 Err(error) => last_error = Some(error.code().0),
             }
         }
-        let holder = unsafe { GetOpenClipboardWindow() };
+        let holder = unsafe { GetOpenClipboardWindow() }.ok();
         let mut holder_pid = 0;
-        if !holder.0.is_null() {
+        if let Some(holder) = holder.filter(|holder| !holder.0.is_null()) {
             unsafe { GetWindowThreadProcessId(holder, Some(&mut holder_pid)) };
         }
         log::warn!(
