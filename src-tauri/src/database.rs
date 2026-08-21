@@ -871,6 +871,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn image_file_capture_keeps_a_thumbnail_blob_and_original_path_representation() {
+        let root = std::env::temp_dir().join(format!("easyclipboard-test-{}", Uuid::new_v4()));
+        let db = Database::open(&root).await.unwrap();
+        let mut writer = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            3,
+            2,
+            image::Rgba([30, 60, 90, 255]),
+        ))
+        .write_to(&mut writer, image::ImageFormat::Png)
+        .unwrap();
+        let png = writer.into_inner();
+        let original_file = "C:\\Temp\\chat-image.png".to_owned();
+        let id = db
+            .insert_capture(CapturedClipboard {
+                kind: ClipboardKind::Image,
+                title: "chat-image.png · 3 × 2".into(),
+                content: String::new(),
+                html: None,
+                rtf: None,
+                image_png: Some(png.clone()),
+                files: vec![original_file.clone()],
+                source_name: "Chat".into(),
+                source_app_id: Some("chat.exe".into()),
+                byte_size: png.len() as u64,
+                hash: "image-file-hash".into(),
+            })
+            .await
+            .unwrap();
+
+        let detail = db.get_item(id.clone()).await.unwrap();
+        assert_eq!(detail.summary.kind, ClipboardKind::Image);
+        assert_eq!(detail.files, vec![original_file]);
+        assert!(detail
+            .preview_data_url
+            .as_deref()
+            .is_some_and(|value| value.starts_with("data:image/png;base64,")));
+        assert_eq!(db.original_image(id).await.unwrap(), png);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn grouped_and_pinned_items_survive_clear_recent() {
         let root = std::env::temp_dir().join(format!("easyclipboard-test-{}", Uuid::new_v4()));
         let db = Database::open(&root).await.unwrap();

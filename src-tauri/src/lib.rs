@@ -20,7 +20,9 @@ pub fn run() {
         .expect("default shortcut should be valid")
         .with_handler(|app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
-                let _ = windowing::toggle_clipboard(app);
+                if let Err(error) = windowing::toggle_clipboard(app) {
+                    log::warn!("clipboard window toggle failed: {}", error.code());
+                }
             }
         })
         .build();
@@ -74,17 +76,20 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let database = tauri::async_runtime::block_on(Database::open(&app_data_dir))
                 .map_err(|error| error.to_string())?;
-            if let Ok(settings) = tauri::async_runtime::block_on(database.get_settings()) {
-                if settings.shortcut != platform::DEFAULT_SHORTCUT {
-                    let manager = app.global_shortcut();
-                    if manager.unregister_all().is_err()
-                        || manager.register(settings.shortcut.as_str()).is_err()
-                    {
-                        let _ = manager.unregister_all();
-                        let _ = manager.register(platform::DEFAULT_SHORTCUT);
-                        log::warn!("saved shortcut could not be restored");
+            match tauri::async_runtime::block_on(database.get_settings()) {
+                Ok(settings) => {
+                    if settings.shortcut != platform::DEFAULT_SHORTCUT {
+                        let manager = app.global_shortcut();
+                        if manager.unregister_all().is_err()
+                            || manager.register(settings.shortcut.as_str()).is_err()
+                        {
+                            let _ = manager.unregister_all();
+                            let _ = manager.register(platform::DEFAULT_SHORTCUT);
+                            log::warn!("saved shortcut could not be restored");
+                        }
                     }
                 }
+                Err(error) => log::warn!("saved settings could not be restored: {}", error.code()),
             }
             let runtime = RuntimeState::new(platform::change_token());
             app.manage(AppState {
@@ -92,7 +97,7 @@ pub fn run() {
                 runtime: std::sync::Mutex::new(runtime),
             });
             setup_tray(app)?;
-            let (change_sender, change_receiver) = tokio::sync::mpsc::unbounded_channel();
+            let (change_sender, change_receiver) = tokio::sync::mpsc::channel(1);
             platform::install_clipboard_listener(change_sender)?;
             spawn_clipboard_monitor(app.handle().clone(), change_receiver);
             Ok(())
@@ -126,11 +131,15 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => {
-                let _ = windowing::show_clipboard(app);
+                if let Err(error) = windowing::show_clipboard(app) {
+                    log::warn!("clipboard window open failed: {}", error.code());
+                }
             }
             "pause" => toggle_recording(app.clone()),
             "settings" => {
-                let _ = windowing::open_settings(app);
+                if let Err(error) = windowing::open_settings(app) {
+                    log::warn!("settings window open failed: {}", error.code());
+                }
             }
             "quit" => app.exit(0),
             _ => {}
@@ -142,27 +151,32 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 fn toggle_recording(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let database = app.state::<AppState>().database.clone();
-        if let Ok(mut settings) = database.get_settings().await {
-            settings.recording_paused = !settings.recording_paused;
-            if let Ok(settings) = database.save_settings(settings).await {
-                let _ = app.emit("settings://changed", settings);
+        match database.get_settings().await {
+            Ok(mut settings) => {
+                settings.recording_paused = !settings.recording_paused;
+                match database.save_settings(settings).await {
+                    Ok(settings) => {
+                        let _ = app.emit("settings://changed", settings);
+                    }
+                    Err(error) => {
+                        log::warn!("tray recording setting save failed: {}", error.code())
+                    }
+                }
             }
+            Err(error) => log::warn!("tray recording setting read failed: {}", error.code()),
         }
     });
 }
 
-fn spawn_clipboard_monitor(
-    app: AppHandle,
-    change_receiver: tokio::sync::mpsc::UnboundedReceiver<()>,
-) {
+fn spawn_clipboard_monitor(app: AppHandle, change_receiver: tokio::sync::mpsc::Receiver<()>) {
     #[cfg(target_os = "windows")]
     let mut change_receiver = change_receiver;
     #[cfg(target_os = "macos")]
     let _change_receiver = change_receiver;
     tauri::async_runtime::spawn(async move {
+        let database = app.state::<AppState>().database.clone();
         let mut last_cleanup = Instant::now() - Duration::from_secs(86_400);
         loop {
-            let database = app.state::<AppState>().database.clone();
             let settings = match database.get_settings().await {
                 Ok(settings) => settings,
                 Err(error) => {

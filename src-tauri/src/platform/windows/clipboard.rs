@@ -8,7 +8,8 @@ use std::{
 };
 
 use image::{DynamicImage, ImageFormat, RgbaImage};
-use tokio::sync::mpsc::UnboundedSender;
+use tauri::{AppHandle, Manager};
+use tokio::sync::mpsc::Sender;
 use windows::{
     core::w,
     Win32::{
@@ -25,9 +26,10 @@ use windows::{
         UI::{
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
-                TranslateMessage, CS_HREDRAW, CS_VREDRAW, HWND_MESSAGE, MSG, WINDOW_EX_STYLE,
-                WINDOW_STYLE, WM_CLIPBOARDUPDATE, WNDCLASSW,
+                CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW,
+                GetOpenClipboardWindow, GetWindowThreadProcessId, RegisterClassW, TranslateMessage,
+                CS_HREDRAW, CS_VREDRAW, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE,
+                WM_CLIPBOARDUPDATE, WNDCLASSW,
             },
         },
     },
@@ -35,8 +37,8 @@ use windows::{
 
 use crate::{
     domain::clipboard::{
-        file_title, hash_bytes, hash_files, normalize_image, text_title, WriteReceipt, FILE_LIMIT,
-        TEXT_LIMIT,
+        file_title, hash_bytes, hash_files, normalize_image, normalize_single_image_file,
+        text_title, WriteReceipt, DECODED_IMAGE_LIMIT, FILE_LIMIT, TEXT_LIMIT,
     },
     error::AppError,
     models::{CapturedClipboard, ClipboardItemDetail, ClipboardKind},
@@ -51,19 +53,34 @@ const BI_RGB: u32 = 0;
 const BI_BITFIELDS: u32 = 3;
 const DIBV5_HEADER_SIZE: usize = 124;
 
-static CHANGE_SENDER: OnceLock<Mutex<UnboundedSender<()>>> = OnceLock::new();
+static CHANGE_SENDER: OnceLock<Mutex<Sender<()>>> = OnceLock::new();
 
 struct ClipboardGuard;
 
 impl ClipboardGuard {
-    fn open() -> Result<Self, AppError> {
-        for _ in 0..10 {
-            if unsafe { OpenClipboard(None) }.is_ok() {
-                return Ok(Self);
+    fn open(owner: Option<HWND>) -> Result<Self, AppError> {
+        let mut last_error = None;
+        for delay in [0, 10, 20, 40, 80, 120, 160, 200] {
+            if delay > 0 {
+                thread::sleep(Duration::from_millis(delay));
             }
-            thread::sleep(Duration::from_millis(20));
+            match unsafe { OpenClipboard(owner) } {
+                Ok(()) => {
+                    return Ok(Self);
+                }
+                Err(error) => last_error = Some(error.code().0),
+            }
         }
-        Err(AppError::ClipboardUnavailable)
+        let holder = unsafe { GetOpenClipboardWindow() };
+        let mut holder_pid = 0;
+        if !holder.0.is_null() {
+            unsafe { GetWindowThreadProcessId(holder, Some(&mut holder_pid)) };
+        }
+        log::warn!(
+            "windows clipboard open failed error_code={} holder_pid={holder_pid}",
+            last_error.unwrap_or_default()
+        );
+        Err(AppError::ClipboardBusy)
     }
 }
 
@@ -77,7 +94,7 @@ pub fn change_token() -> i64 {
     unsafe { GetClipboardSequenceNumber() as i64 }
 }
 
-pub fn install_clipboard_listener(sender: UnboundedSender<()>) -> Result<(), AppError> {
+pub fn install_clipboard_listener(sender: Sender<()>) -> Result<(), AppError> {
     CHANGE_SENDER
         .set(Mutex::new(sender))
         .map_err(|_| AppError::ClipboardUnavailable)?;
@@ -116,9 +133,19 @@ pub fn install_clipboard_listener(sender: UnboundedSender<()>) -> Result<(), App
                 None,
             ) {
                 Ok(window) => window,
-                Err(_) => return,
+                Err(error) => {
+                    log::warn!(
+                        "clipboard listener window creation failed error_code={}",
+                        error.code().0
+                    );
+                    return;
+                }
             };
-            if AddClipboardFormatListener(window).is_err() {
+            if let Err(error) = AddClipboardFormatListener(window) {
+                log::warn!(
+                    "clipboard listener registration failed error_code={}",
+                    error.code().0
+                );
                 return;
             }
             let mut message = MSG::default();
@@ -140,7 +167,7 @@ unsafe extern "system" fn window_proc(
 ) -> LRESULT {
     if message == WM_CLIPBOARDUPDATE {
         if let Some(sender) = CHANGE_SENDER.get().and_then(|sender| sender.lock().ok()) {
-            let _ = sender.send(());
+            let _ = sender.try_send(());
         }
         return LRESULT(0);
     }
@@ -148,62 +175,79 @@ unsafe extern "system" fn window_proc(
 }
 
 pub fn read_capture(source: TargetApplication) -> Result<Option<CapturedClipboard>, AppError> {
-    let _guard = ClipboardGuard::open()?;
+    let _guard = ClipboardGuard::open(None)?;
     if clipboard_is_sensitive()? {
         return Ok(None);
     }
 
-    if format_available(CF_HDROP) {
-        let files = read_files()?;
-        if !files.is_empty() {
-            if files.len() > FILE_LIMIT {
-                return Err(AppError::ContentTooLarge);
-            }
-            let byte_size = files
-                .iter()
-                .filter_map(|file| std::fs::metadata(file).ok())
-                .map(|metadata| metadata.len())
-                .sum();
-            return Ok(Some(CapturedClipboard {
-                kind: ClipboardKind::Files,
-                title: file_title(&files),
-                content: String::new(),
-                html: None,
-                rtf: None,
-                image_png: None,
-                hash: hash_files(&files),
-                files,
-                source_name: source.name,
-                source_app_id: source.identifier,
-                byte_size,
-            }));
+    let files = if format_available(CF_HDROP) {
+        read_files()?
+    } else {
+        vec![]
+    };
+    if !files.is_empty() {
+        if files.len() > FILE_LIMIT {
+            return Err(AppError::ContentTooLarge);
         }
+        if files.len() == 1 {
+            let normalized = read_available_image()
+                .as_deref()
+                .and_then(|bytes| normalize_image(bytes).ok())
+                .or_else(|| normalize_single_image_file(&files));
+            if let Some((png, width, height)) = normalized {
+                let hash = hash_bytes(b"image\0", &png);
+                let byte_size = png.len() as u64;
+                return Ok(Some(CapturedClipboard {
+                    kind: ClipboardKind::Image,
+                    title: format!("{} · {width} × {height}", file_title(&files)),
+                    content: String::new(),
+                    html: None,
+                    rtf: None,
+                    image_png: Some(png),
+                    hash,
+                    files,
+                    source_name: source.name,
+                    source_app_id: source.identifier,
+                    byte_size,
+                }));
+            }
+        }
+        let byte_size = files
+            .iter()
+            .filter_map(|file| std::fs::metadata(file).ok())
+            .map(|metadata| metadata.len())
+            .sum();
+        return Ok(Some(CapturedClipboard {
+            kind: ClipboardKind::Files,
+            title: file_title(&files),
+            content: String::new(),
+            html: None,
+            rtf: None,
+            image_png: None,
+            hash: hash_files(&files),
+            files,
+            source_name: source.name,
+            source_app_id: source.identifier,
+            byte_size,
+        }));
     }
 
-    let png_format = unsafe { RegisterClipboardFormatW(w!("PNG")) };
-    let image = if png_format != 0 && format_available(png_format) {
-        Some(read_global_bytes(png_format)?)
-    } else if format_available(CF_DIBV5) {
-        Some(dib_to_png(&read_global_bytes(CF_DIBV5)?)?)
-    } else if format_available(CF_DIB) {
-        Some(dib_to_png(&read_global_bytes(CF_DIB)?)?)
-    } else {
-        None
-    };
-    if let Some(image_bytes) = image {
+    if let Some(image_bytes) = read_available_image() {
         let (png, width, height) = normalize_image(&image_bytes)?;
+        let hash = hash_bytes(b"image\0", &png);
+        let byte_size = png.len() as u64;
         return Ok(Some(CapturedClipboard {
             kind: ClipboardKind::Image,
             title: format!("图片 · {width} × {height}"),
             content: String::new(),
             html: None,
             rtf: None,
-            image_png: Some(png.clone()),
+            image_png: Some(png),
             files: vec![],
             source_name: source.name,
             source_app_id: source.identifier,
-            byte_size: png.len() as u64,
-            hash: hash_bytes(b"image\0", &png),
+            byte_size,
+            hash,
         }));
     }
 
@@ -237,14 +281,60 @@ pub fn read_capture(source: TargetApplication) -> Result<Option<CapturedClipboar
     }))
 }
 
+fn read_available_image() -> Option<Vec<u8>> {
+    let png_format = unsafe { RegisterClipboardFormatW(w!("PNG")) };
+    if png_format != 0 && format_available(png_format) {
+        match read_global_bytes(png_format) {
+            Ok(bytes) => return Some(bytes),
+            Err(error) => log::warn!(
+                "windows clipboard image read failed format=PNG error_code={}",
+                error.code()
+            ),
+        }
+    }
+    for format in [CF_DIBV5, CF_DIB] {
+        if format_available(format) {
+            match read_global_bytes(format).and_then(|bytes| dib_to_png(&bytes)) {
+                Ok(bytes) => return Some(bytes),
+                Err(error) => log::warn!(
+                    "windows clipboard image read failed format={format} error_code={}",
+                    error.code()
+                ),
+            }
+        }
+    }
+    None
+}
+
 pub fn write_item(
+    app: &AppHandle,
     item: &ClipboardItemDetail,
     image_png: Option<&[u8]>,
     html: Option<&[u8]>,
     rtf: Option<&[u8]>,
 ) -> Result<WriteReceipt, AppError> {
-    let _guard = ClipboardGuard::open()?;
-    unsafe { EmptyClipboard() }.map_err(|_| AppError::ClipboardUnavailable)?;
+    if matches!(item.summary.kind, ClipboardKind::Files)
+        && item.files.iter().any(|file| !Path::new(file).exists())
+    {
+        return Err(AppError::FileMissing);
+    }
+    let owner = app
+        .get_webview_window("clipboard")
+        .ok_or(AppError::ClipboardWriteFailed)?
+        .hwnd()
+        .map_err(|error| {
+            log::warn!("windows clipboard write failed stage=resolve_owner error={error}");
+            AppError::ClipboardWriteFailed
+        })?;
+    let owner = HWND(owner.0 as *mut core::ffi::c_void);
+    let _guard = ClipboardGuard::open(Some(owner))?;
+    unsafe { EmptyClipboard() }.map_err(|error| {
+        log::warn!(
+            "windows clipboard write failed stage=empty error_code={}",
+            error.code().0
+        );
+        AppError::ClipboardWriteFailed
+    })?;
     let hash = match item.summary.kind {
         ClipboardKind::Text => {
             set_global_bytes(CF_UNICODETEXT, &encode_unicode_text(&item.content))?;
@@ -268,13 +358,24 @@ pub fn write_item(
             if png_format != 0 {
                 set_global_bytes(png_format, png)?;
             }
-            set_global_bytes(CF_DIBV5, &png_to_dibv5(png)?)?;
+            let dib = png_to_dibv5(png).map_err(|error| {
+                log::warn!(
+                    "windows clipboard write failed stage=encode_dib error_code={}",
+                    error.code()
+                );
+                if matches!(&error, AppError::ContentTooLarge) {
+                    error
+                } else {
+                    AppError::ClipboardWriteFailed
+                }
+            })?;
+            set_global_bytes(CF_DIBV5, &dib)?;
+            if !item.files.is_empty() && item.files.iter().all(|file| Path::new(file).exists()) {
+                set_global_bytes(CF_HDROP, &encode_file_drop(&item.files))?;
+            }
             hash_bytes(b"image\0", png)
         }
         ClipboardKind::Files => {
-            if item.files.iter().any(|file| !Path::new(file).exists()) {
-                return Err(AppError::FileMissing);
-            }
             set_global_bytes(CF_HDROP, &encode_file_drop(&item.files))?;
             hash_files(&item.files)
         }
@@ -324,18 +425,28 @@ fn read_global_bytes(format: u32) -> Result<Vec<u8>, AppError> {
 }
 
 fn set_global_bytes(format: u32, bytes: &[u8]) -> Result<(), AppError> {
-    let global = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) }
-        .map_err(|_| AppError::ClipboardUnavailable)?;
+    let global = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) }.map_err(|error| {
+        log::warn!(
+            "windows clipboard write failed stage=allocate format={format} error_code={}",
+            error.code().0
+        );
+        AppError::ClipboardWriteFailed
+    })?;
     let pointer = unsafe { GlobalLock(global) };
     if pointer.is_null() {
         let _ = unsafe { GlobalFree(Some(global)) };
-        return Err(AppError::ClipboardUnavailable);
+        log::warn!("windows clipboard write failed stage=lock format={format}");
+        return Err(AppError::ClipboardWriteFailed);
     }
     unsafe { copy_nonoverlapping(bytes.as_ptr(), pointer.cast::<u8>(), bytes.len()) };
     let _ = unsafe { GlobalUnlock(global) };
-    if unsafe { SetClipboardData(format, Some(HANDLE(global.0))) }.is_err() {
+    if let Err(error) = unsafe { SetClipboardData(format, Some(HANDLE(global.0))) } {
         let _ = unsafe { GlobalFree(Some(global)) };
-        return Err(AppError::ClipboardUnavailable);
+        log::warn!(
+            "windows clipboard write failed stage=set_data format={format} error_code={}",
+            error.code().0
+        );
+        return Err(AppError::ClipboardWriteFailed);
     }
     Ok(())
 }
@@ -432,7 +543,9 @@ fn dib_to_png(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
     let signed_height = read_i32(8);
     let bits = u16::from_le_bytes(bytes[14..16].try_into().unwrap());
     let compression = read_u32(16);
-    if width <= 0
+    if header_size < 40
+        || header_size > bytes.len()
+        || width <= 0
         || signed_height == 0
         || !matches!(bits, 24 | 32)
         || !matches!(compression, BI_RGB | BI_BITFIELDS)
@@ -445,8 +558,22 @@ fn dib_to_png(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
     let pixel_offset = header_size
         .checked_add(extra_masks)
         .ok_or(AppError::ClipboardUnavailable)?;
-    let stride = (width as usize * bits as usize).div_ceil(32) * 4;
-    if pixel_offset + stride * height as usize > bytes.len() {
+    let stride = (width as usize)
+        .checked_mul(bits as usize)
+        .and_then(|value| value.checked_add(31))
+        .map(|value| value / 32)
+        .and_then(|value| value.checked_mul(4))
+        .ok_or(AppError::ClipboardUnavailable)?;
+    let pixel_bytes = stride
+        .checked_mul(height as usize)
+        .ok_or(AppError::ClipboardUnavailable)?;
+    if pixel_bytes > DECODED_IMAGE_LIMIT {
+        return Err(AppError::ContentTooLarge);
+    }
+    if pixel_offset
+        .checked_add(pixel_bytes)
+        .is_none_or(|end| end > bytes.len())
+    {
         return Err(AppError::ClipboardUnavailable);
     }
     let mut rgba = RgbaImage::new(width, height);
@@ -479,8 +606,20 @@ fn png_to_dibv5(png: &[u8]) -> Result<Vec<u8>, AppError> {
         .to_rgba8();
     let width = rgba.width();
     let height = rgba.height();
-    let image_size = width as usize * height as usize * 4;
-    let mut bytes = vec![0u8; DIBV5_HEADER_SIZE + image_size];
+    if width > i32::MAX as u32 || height > i32::MAX as u32 {
+        return Err(AppError::ContentTooLarge);
+    }
+    let image_size = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|value| value.checked_mul(4))
+        .ok_or(AppError::ContentTooLarge)?;
+    if image_size > DECODED_IMAGE_LIMIT {
+        return Err(AppError::ContentTooLarge);
+    }
+    let allocation_size = DIBV5_HEADER_SIZE
+        .checked_add(image_size)
+        .ok_or(AppError::ContentTooLarge)?;
+    let mut bytes = vec![0u8; allocation_size];
     bytes[0..4].copy_from_slice(&(DIBV5_HEADER_SIZE as u32).to_le_bytes());
     bytes[4..8].copy_from_slice(&(width as i32).to_le_bytes());
     bytes[8..12].copy_from_slice(&(-(height as i32)).to_le_bytes());

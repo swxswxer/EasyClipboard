@@ -21,7 +21,7 @@ pub const SUPPORTS_APP_EXCLUSIONS: bool = true;
 pub const RECORDING_STARTS_AUTOMATICALLY: bool = false;
 
 pub fn install_clipboard_listener(
-    _sender: tokio::sync::mpsc::UnboundedSender<()>,
+    _sender: tokio::sync::mpsc::Sender<()>,
 ) -> Result<(), crate::error::AppError> {
     Ok(())
 }

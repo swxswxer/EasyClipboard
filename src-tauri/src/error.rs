@@ -14,6 +14,14 @@ pub enum AppError {
     ContentTooLarge,
     #[error("the system clipboard is unavailable")]
     ClipboardUnavailable,
+    #[cfg(target_os = "windows")]
+    #[error("the system clipboard is currently in use by another application")]
+    ClipboardBusy,
+    #[cfg(target_os = "windows")]
+    #[error("failed to write data to the system clipboard")]
+    ClipboardWriteFailed,
+    #[error("no target application is available for paste")]
+    PasteTargetMissing,
     #[error("local storage operation failed: {0}")]
     Storage(String),
 }
@@ -27,6 +35,11 @@ impl AppError {
             Self::ShortcutConflict => "shortcut_conflict",
             Self::ContentTooLarge => "content_too_large",
             Self::ClipboardUnavailable => "clipboard_unavailable",
+            #[cfg(target_os = "windows")]
+            Self::ClipboardBusy => "clipboard_busy",
+            #[cfg(target_os = "windows")]
+            Self::ClipboardWriteFailed => "clipboard_write_failed",
+            Self::PasteTargetMissing => "paste_target_missing",
             Self::Storage(_) => "storage_error",
         }
     }

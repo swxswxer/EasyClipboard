@@ -1,4 +1,4 @@
-# EasyClipboard 0.1.0
+# EasyClipboard 0.1.1
 
 本地优先的 Windows 与 macOS 剪贴板历史 MVP。界面使用同一套 React 深色毛玻璃设计，原生能力由 Rust 平台层分别实现。
 
@@ -18,7 +18,7 @@ Windows 遇到管理员权限目标或系统拒绝焦点/按键注入时，会�
 - 本地 SQLite/FTS5、数量/天数保留规则
 - 托盘常驻、暂停记录、登录时启动和单实例运行
 
-账号、云同步、网络请求、自动更新、OCR、macOS Intel 和 Windows ARM64 不在 0.1.0 范围内。
+账号、云同步、网络请求、自动更新、OCR、macOS Intel 和 Windows ARM64 不在 0.1.1 范围内。
 
 ## 目录
 
@@ -61,4 +61,4 @@ npm run tauri:build -- --bundles nsis
 - macOS：`src-tauri/target/release/bundle/macos/` 与 `bundle/dmg/`
 - Windows：`src-tauri/target/release/bundle/nsis/`
 
-0.1.0 安装包未签名、未公证，仅用于内测。macOS 可能要求在 Finder 中右键“打开”，Windows 可能显示 SmartScreen 提示。
+0.1.1 安装包未签名、未公证，仅用于内测。macOS 可能要求在 Finder 中右键“打开”，Windows 可能显示 SmartScreen 提示。

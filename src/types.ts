@@ -7,6 +7,9 @@ export type ErrorCode =
   | "shortcut_conflict"
   | "content_too_large"
   | "clipboard_unavailable"
+  | "clipboard_busy"
+  | "clipboard_write_failed"
+  | "paste_target_missing"
   | "storage_error";
 
 export interface ClipboardItemSummary {

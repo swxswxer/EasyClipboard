@@ -7,11 +7,12 @@ use objc2_app_kit::{
     NSPasteboardWriting,
 };
 use objc2_foundation::{NSArray, NSData, NSString, NSURL};
+use tauri::AppHandle;
 
 use crate::{
     domain::clipboard::{
-        file_title, hash_bytes, hash_files, normalize_image, text_title, WriteReceipt, FILE_LIMIT,
-        TEXT_LIMIT,
+        file_title, hash_bytes, hash_files, normalize_image, normalize_single_image_file,
+        text_title, WriteReceipt, FILE_LIMIT, TEXT_LIMIT,
     },
     error::AppError,
     models::{CapturedClipboard, ClipboardItemDetail, ClipboardKind},
@@ -57,9 +58,38 @@ pub fn read_capture(source: TargetApplication) -> Result<Option<CapturedClipboar
             .filter_map(|url| url.path())
             .map(|path| path.to_string())
             .collect();
+        let image_bytes = pasteboard
+            .dataForType(png_type)
+            .or_else(|| pasteboard.dataForType(&jpeg_type))
+            .or_else(|| pasteboard.dataForType(tiff_type))
+            .map(|value| value.to_vec());
+
         if !files.is_empty() {
             if files.len() > FILE_LIMIT {
                 return Err(AppError::ContentTooLarge);
+            }
+            if files.len() == 1 {
+                let normalized = image_bytes
+                    .as_deref()
+                    .and_then(|bytes| normalize_image(bytes).ok())
+                    .or_else(|| normalize_single_image_file(&files));
+                if let Some((png, width, height)) = normalized {
+                    let hash = hash_bytes(b"image\0", &png);
+                    let byte_size = png.len() as u64;
+                    return Ok(Some(CapturedClipboard {
+                        kind: ClipboardKind::Image,
+                        title: format!("{} · {width} × {height}", file_title(&files)),
+                        content: String::new(),
+                        html: None,
+                        rtf: None,
+                        image_png: Some(png),
+                        hash,
+                        files,
+                        source_name: source.name,
+                        source_app_id: source.identifier,
+                        byte_size,
+                    }));
+                }
             }
             let byte_size = files
                 .iter()
@@ -81,24 +111,22 @@ pub fn read_capture(source: TargetApplication) -> Result<Option<CapturedClipboar
             }));
         }
 
-        if let Some(data) = pasteboard
-            .dataForType(png_type)
-            .or_else(|| pasteboard.dataForType(&jpeg_type))
-            .or_else(|| pasteboard.dataForType(tiff_type))
-        {
-            let (png, width, height) = normalize_image(&data.to_vec())?;
+        if let Some(data) = image_bytes {
+            let (png, width, height) = normalize_image(&data)?;
+            let hash = hash_bytes(b"image\0", &png);
+            let byte_size = png.len() as u64;
             return Ok(Some(CapturedClipboard {
                 kind: ClipboardKind::Image,
                 title: format!("图片 · {width} × {height}"),
                 content: String::new(),
                 html: None,
                 rtf: None,
-                image_png: Some(png.clone()),
+                image_png: Some(png),
                 files: vec![],
                 source_name: source.name,
                 source_app_id: source.identifier,
-                byte_size: png.len() as u64,
-                hash: hash_bytes(b"image\0", &png),
+                byte_size,
+                hash,
             }));
         }
 
@@ -128,6 +156,7 @@ pub fn read_capture(source: TargetApplication) -> Result<Option<CapturedClipboar
 }
 
 pub fn write_item(
+    _app: &AppHandle,
     item: &ClipboardItemDetail,
     image_png: Option<&[u8]>,
     html: Option<&[u8]>,
@@ -166,6 +195,12 @@ pub fn write_item(
                 let pasteboard_item = NSPasteboardItem::new();
                 if !pasteboard_item.setData_forType(&NSData::with_bytes(image_png), png_type) {
                     return Err(AppError::ClipboardUnavailable);
+                }
+                if let Some(file) = item.files.iter().find(|file| Path::new(file).exists()) {
+                    let url = NSURL::fileURLWithPath(&NSString::from_str(file));
+                    if let Some(value) = url.absoluteString() {
+                        pasteboard_item.setString_forType(&value, file_url_type);
+                    }
                 }
                 objects.push(ProtocolObject::<dyn NSPasteboardWriting>::from_retained(
                     pasteboard_item,

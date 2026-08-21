@@ -1,22 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClipboardItemDetail, ClipboardItemSummary, ClipboardPage, Group, DesktopCapabilities, Settings } from "./types";
+import type { ClipboardItemDetail, ClipboardItemSummary, ClipboardPage, ErrorCode, Group, DesktopCapabilities, Settings } from "./types";
 import { RepositoryError } from "./types";
 import { ClipboardPanel, type MenuState, type PanelDialogState } from "./components/ClipboardPanel";
 import { SettingsPage } from "./components/SettingsPage";
 import { repository } from "./repositories";
 
-const errorText = (error: unknown) => {
-  if (!(error instanceof RepositoryError)) return "操作失败，请稍后重试";
-  return ({
-    not_found: "这条内容已经不存在",
-    file_missing: "文件已移动或删除，无法粘贴",
-    permission_denied: "需要开启辅助功能才能使用 EasyClipboard",
-    shortcut_conflict: "快捷键已被其他应用占用",
-    content_too_large: "内容超过 MVP 大小限制",
-    clipboard_unavailable: "系统剪贴板暂时不可用",
-    storage_error: "本地数据操作失败",
-  })[error.code];
+const ERROR_MESSAGES: Record<ErrorCode, string> = {
+  not_found: "这条内容已经不存在",
+  file_missing: "文件或临时图片已移动、删除，无法粘贴",
+  permission_denied: "需要开启辅助功能才能使用 EasyClipboard",
+  shortcut_conflict: "快捷键已被其他应用占用",
+  content_too_large: "内容超过 MVP 大小限制",
+  clipboard_unavailable: "系统剪贴板暂时不可用",
+  clipboard_busy: "剪贴板正被其他应用占用，请稍后重试",
+  clipboard_write_failed: "剪贴板写入失败，请重试",
+  paste_target_missing: "未找到粘贴目标，请从目标应用中打开剪贴板",
+  storage_error: "本地数据操作失败",
 };
+
+const errorText = (error: unknown) => error instanceof RepositoryError
+  ? ERROR_MESSAGES[error.code]
+  : "操作失败，请稍后重试";
 
 export function App() {
   const windowType = new URLSearchParams(window.location.search).get("window");

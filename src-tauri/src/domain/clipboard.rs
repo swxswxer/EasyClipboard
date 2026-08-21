@@ -7,6 +7,8 @@ use crate::error::AppError;
 
 pub const TEXT_LIMIT: usize = 2 * 1024 * 1024;
 pub const IMAGE_LIMIT: usize = 25 * 1024 * 1024;
+#[cfg(target_os = "windows")]
+pub const DECODED_IMAGE_LIMIT: usize = 256 * 1024 * 1024;
 pub const FILE_LIMIT: usize = 100;
 
 #[derive(Clone, Debug)]
@@ -74,6 +76,25 @@ pub fn normalize_image(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), AppError> {
     Ok((png, width, height))
 }
 
+pub fn normalize_single_image_file(files: &[String]) -> Option<(Vec<u8>, u32, u32)> {
+    let [file] = files else {
+        return None;
+    };
+    let extension = Path::new(file)
+        .extension()
+        .and_then(|value| value.to_str())?
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "tif" | "tiff") {
+        return None;
+    }
+    let metadata = std::fs::metadata(file).ok()?;
+    if metadata.len() == 0 || metadata.len() > IMAGE_LIMIT as u64 {
+        return None;
+    }
+    let bytes = std::fs::read(file).ok()?;
+    normalize_image(&bytes).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +117,23 @@ mod tests {
             hash_bytes(b"image\0", b"same")
         );
         assert_eq!(hash_files(&["one".into()]), hash_files(&["one".into()]));
+    }
+
+    #[test]
+    fn a_single_decodable_image_file_can_be_persisted_as_an_image() {
+        let path = std::env::temp_dir().join(format!("easyclipboard-{}.png", uuid::Uuid::new_v4()));
+        image::RgbaImage::from_pixel(2, 3, image::Rgba([20, 40, 60, 255]))
+            .save(&path)
+            .unwrap();
+        let files = vec![path.to_string_lossy().into_owned()];
+        let normalized = normalize_single_image_file(&files).unwrap();
+        assert_eq!((normalized.1, normalized.2), (2, 3));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn multiple_or_non_image_files_stay_as_files() {
+        assert!(normalize_single_image_file(&["one.txt".into()]).is_none());
+        assert!(normalize_single_image_file(&["one.png".into(), "two.png".into()]).is_none());
     }
 }

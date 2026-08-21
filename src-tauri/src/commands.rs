@@ -21,7 +21,7 @@ fn validate_paste_target(
     if !automation_ready {
         return Err(AppError::PermissionDenied);
     }
-    target.ok_or(AppError::ClipboardUnavailable)
+    target.ok_or(AppError::PasteTargetMissing)
 }
 
 fn clipboard_access_state(state: &AppState) -> String {
@@ -81,7 +81,13 @@ pub async fn paste_item(
     } else {
         None
     };
-    let receipt = platform::write_item(&item, image.as_deref(), html.as_deref(), rtf.as_deref())?;
+    let receipt = platform::write_item(
+        &app,
+        &item,
+        image.as_deref(),
+        html.as_deref(),
+        rtf.as_deref(),
+    )?;
     {
         let mut runtime = state
             .runtime
@@ -217,14 +223,23 @@ pub async fn update_settings(
     settings: Settings,
 ) -> Result<Settings, AppError> {
     let settings = platform::sanitize_settings(settings);
-    if settings.launch_at_login {
-        app.autolaunch()
-            .enable()
+    let previous = state.database.get_settings().await?;
+    if previous.launch_at_login != settings.launch_at_login {
+        let autolaunch = app.autolaunch();
+        let currently_enabled = autolaunch
+            .is_enabled()
             .map_err(|error| AppError::Storage(error.to_string()))?;
-    } else {
-        app.autolaunch()
-            .disable()
-            .map_err(|error| AppError::Storage(error.to_string()))?;
+        if currently_enabled != settings.launch_at_login {
+            if settings.launch_at_login {
+                autolaunch
+                    .enable()
+                    .map_err(|error| AppError::Storage(error.to_string()))?;
+            } else {
+                autolaunch
+                    .disable()
+                    .map_err(|error| AppError::Storage(error.to_string()))?;
+            }
+        }
     }
     let result = state.database.save_settings(settings).await?;
     let _ = app.emit("settings://changed", &result);
@@ -362,7 +377,7 @@ mod tests {
     fn paste_preconditions_require_a_target_application() {
         assert!(matches!(
             validate_paste_target(true, None),
-            Err(AppError::ClipboardUnavailable)
+            Err(AppError::PasteTargetMissing)
         ));
     }
 }
