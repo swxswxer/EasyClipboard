@@ -157,6 +157,18 @@ pub async fn set_pinned(
 }
 
 #[tauri::command]
+pub async fn rename_item(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    title: String,
+) -> Result<(), AppError> {
+    state.database.rename_item(id, title).await?;
+    emit_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn list_groups(state: State<'_, AppState>) -> Result<Vec<Group>, AppError> {
     state.database.list_groups().await
 }

@@ -147,6 +147,23 @@ function ClipboardApp() {
   }, [notify]);
 
   useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | undefined;
+    void repository.subscribePanelHidden(() => {
+      setDialog(null);
+      setMenu(null);
+      setToast(null);
+      if (toastTimer.current) {
+        window.clearTimeout(toastTimer.current);
+        toastTimer.current = null;
+      }
+    }).then((value) => {
+      if (disposed) value(); else cleanup = value;
+    }).catch((error) => { if (!disposed) notify(errorText(error)); });
+    return () => { disposed = true; cleanup?.(); };
+  }, [notify]);
+
+  useEffect(() => {
     if (permission?.pasteAutomation !== "permission_required") return;
     const timer = window.setInterval(() => void refreshPermission(), 1_000);
     const onFocus = () => void refreshPermission();
@@ -173,10 +190,11 @@ function ClipboardApp() {
   };
 
   const submitDialog = async (name: string) => {
-    if (!dialog || (dialog.mode !== "create" && dialog.mode !== "rename")) return;
+    if (!dialog || !["create", "rename", "rename_item"].includes(dialog.mode)) return;
     try {
       if (dialog.mode === "create") { const group = await repository.createGroup(name); setActiveGroup(group.id); notify(`已创建分组“${name}”`); }
       else if (dialog.groupId) { await repository.renameGroup(dialog.groupId, name); notify("分组已重命名"); }
+      else if (dialog.mode === "rename_item" && dialog.itemId) { await repository.renameItem(dialog.itemId, name); notify("标题已修改"); }
       setDialog(null); setMenu(null); await refresh();
     } catch (error) { notify(errorText(error)); }
   };
@@ -258,12 +276,15 @@ function ClipboardApp() {
     <ClipboardPanel groups={groups} items={page.items} activeGroup={activeGroup} query={query} selectedId={selectedId} detail={detail}
       dialog={dialog} menu={menu} toast={toast} nextCursor={page.nextCursor} loading={loading} recordingPaused={settings?.recordingPaused ?? false} permission={permission}
       searchFocusRequest={searchFocusRequest}
+      previousGroupShortcut={settings?.previousGroupShortcut ?? (permission?.platform === "windows" ? "Control+[" : "Command+[")}
+      nextGroupShortcut={settings?.nextGroupShortcut ?? (permission?.platform === "windows" ? "Control+]" : "Command+]")}
       onSetActiveGroup={(id) => { setActiveGroup(id); setQuery(""); setMenu(null); setSelectedId(null); }} onSetQuery={setQuery} onSelect={setSelectedId}
       onOpenDialog={(mode, group) => { setMenu(null); setDialog({ mode, groupId: group?.id, initialName: group?.name }); }} onCloseDialog={() => setDialog(null)} onSubmitDialog={(name) => void submitDialog(name)}
       onConfirmDelete={() => void confirmDelete()}
       onToggleMoveMenu={(id) => setMenu((current) => current?.type === "move" && current.itemId === id ? null : { type: "move", itemId: id })}
       onMoveItem={(id, groupId) => void run(() => repository.moveItem(id, groupId), groupId ? "已移入分组，内容将永久保留" : "已移出分组")}
       onTogglePin={(item) => void run(() => repository.setPinned(item.id, !item.pinned))}
+      onRenameItem={(item) => { setMenu(null); setDialog({ mode: "rename_item", itemId: item.id, initialName: item.title }); }}
       onDeleteItem={(id) => { setMenu(null); setDialog({ mode: "delete_item", itemId: id }); }}
       onPaste={(item) => void paste(item)} onClosePanel={closePanel} onLoadMore={() => void load(true)}
       onToggleRecording={() => void toggleRecording()}

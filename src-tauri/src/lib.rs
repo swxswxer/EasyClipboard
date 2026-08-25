@@ -50,6 +50,7 @@ pub fn run() {
             commands::clear_recent,
             commands::delete_all_data,
             commands::set_pinned,
+            commands::rename_item,
             commands::list_groups,
             commands::create_group,
             commands::rename_group,
@@ -104,7 +105,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() == "clipboard" && matches!(event, WindowEvent::Focused(false)) {
-                let _ = window.hide();
+                windowing::hide_clipboard(window.app_handle());
             }
         })
         .run(tauri::generate_context!())

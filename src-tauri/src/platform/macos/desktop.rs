@@ -3,7 +3,11 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use objc2::rc::autoreleasepool;
-use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
+use objc2_app_kit::{
+    NSApplicationActivationOptions, NSRunningApplication, NSWindow, NSWindowCollectionBehavior,
+    NSWorkspace,
+};
+use tauri::WebviewWindow;
 
 use crate::{
     error::AppError,
@@ -51,6 +55,37 @@ pub fn activate_and_paste(target: &TargetApplication) -> Result<PasteOutcome, Ap
     down.post(CGEventTapLocation::HID);
     up.post(CGEventTapLocation::HID);
     Ok(PasteOutcome::pasted())
+}
+
+pub fn reveal_window_on_active_space(window: &WebviewWindow) -> Result<(), AppError> {
+    let native_window = window
+        .ns_window()
+        .map_err(|_| AppError::ClipboardUnavailable)? as usize;
+    window
+        .run_on_main_thread(move || unsafe {
+            let window = &*(native_window as *const NSWindow);
+            let mut behavior = window.collectionBehavior();
+            behavior.remove(
+                NSWindowCollectionBehavior::MoveToActiveSpace
+                    | NSWindowCollectionBehavior::Managed
+                    | NSWindowCollectionBehavior::Stationary
+                    | NSWindowCollectionBehavior::ParticipatesInCycle
+                    | NSWindowCollectionBehavior::FullScreenPrimary
+                    | NSWindowCollectionBehavior::FullScreenNone
+                    | NSWindowCollectionBehavior::Primary
+                    | NSWindowCollectionBehavior::Auxiliary,
+            );
+            behavior.insert(
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::Transient
+                    | NSWindowCollectionBehavior::IgnoresCycle
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary
+                    | NSWindowCollectionBehavior::CanJoinAllApplications,
+            );
+            window.setCollectionBehavior(behavior);
+            window.orderFrontRegardless();
+        })
+        .map_err(|_| AppError::ClipboardUnavailable)
 }
 
 pub async fn open_excluded_app_picker() -> Result<Option<ExcludedApp>, AppError> {

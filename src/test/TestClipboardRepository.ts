@@ -60,6 +60,8 @@ const initialItems: ClipboardItemDetail[] = [
 
 const defaultSettings: Settings = {
   shortcut: "Command+Shift+V",
+  previousGroupShortcut: "Command+[",
+  nextGroupShortcut: "Command+]",
   launchAtLogin: false,
   recordingPaused: false,
   maxItems: 500,
@@ -79,6 +81,8 @@ export class TestClipboardRepository implements ClipboardRepository {
   private settings = structuredClone(defaultSettings);
   private callbacks = new Set<() => void>();
   private settingsCallbacks = new Set<() => void>();
+  private panelShownCallbacks = new Set<() => void>();
+  private panelHiddenCallbacks = new Set<() => void>();
 
   reset() {
     this.groups = structuredClone(initialGroups);
@@ -86,6 +90,8 @@ export class TestClipboardRepository implements ClipboardRepository {
     this.settings = structuredClone(defaultSettings);
     this.callbacks.clear();
     this.settingsCallbacks.clear();
+    this.panelShownCallbacks.clear();
+    this.panelHiddenCallbacks.clear();
   }
 
   async listItems({ query = "", groupId = null, cursor = null, limit = 100 }: ListItemsOptions): Promise<ClipboardPage> {
@@ -122,6 +128,7 @@ export class TestClipboardRepository implements ClipboardRepository {
     this.settingsChanged();
   }
   async setPinned(id: string, pinned: boolean) { this.mutate(id, (item) => ({ ...item, pinned, retained: pinned || Boolean(item.groupId) })); }
+  async renameItem(id: string, title: string) { this.mutate(id, (item) => ({ ...item, title: title.trim().slice(0, 72) })); }
   async listGroups() { return structuredClone(this.groups); }
   async createGroup(name: string) {
     const group = { id: `group-${Date.now()}`, name, sortOrder: this.groups.length, createdAt: new Date().toISOString() };
@@ -150,11 +157,18 @@ export class TestClipboardRepository implements ClipboardRepository {
   async openPasteAutomationSettings() {}
   async pickExcludedApp(): Promise<ExcludedApp | null> { return { name: "示例应用", identifier: "com.example.app" }; }
   async startRecording(): Promise<DesktopCapabilities> { return { platform: "macos", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: true }; }
-  async hidePanel() {}
+  async hidePanel() { for (const callback of this.panelHiddenCallbacks) callback(); }
   async closeSettings() { window.location.search = ""; }
   async subscribeChanged(callback: () => void) { this.callbacks.add(callback); return () => this.callbacks.delete(callback); }
   async subscribeSettingsChanged(callback: () => void) { this.settingsCallbacks.add(callback); return () => this.settingsCallbacks.delete(callback); }
-  async subscribePanelShown() { return () => {}; }
+  async subscribePanelShown(callback: () => void) {
+    this.panelShownCallbacks.add(callback);
+    return () => this.panelShownCallbacks.delete(callback);
+  }
+  async subscribePanelHidden(callback: () => void) {
+    this.panelHiddenCallbacks.add(callback);
+    return () => this.panelHiddenCallbacks.delete(callback);
+  }
 
   private mutate(id: string, update: (item: ClipboardItemDetail) => ClipboardItemDetail) {
     this.items = this.items.map((item) => item.id === id ? update(item) : item);

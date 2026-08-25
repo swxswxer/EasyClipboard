@@ -27,6 +27,10 @@ use crate::{
     platform::{ManualPasteReason, PasteOutcome, TargetApplication},
 };
 
+pub fn reveal_window_on_active_space(_window: &tauri::WebviewWindow) -> Result<(), AppError> {
+    Ok(())
+}
+
 pub fn frontmost_application() -> Option<TargetApplication> {
     unsafe {
         let window = GetForegroundWindow();

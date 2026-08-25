@@ -1,6 +1,6 @@
 [package]
 name = "easyclipboard"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local-first Windows and macOS clipboard history"
 authors = ["EasyClipboard"]
 edition = "2021"
@@ -37,7 +37,7 @@ core-foundation = "0.10"
 core-graphics = "0.25"
 macos-accessibility-client = "0.0.1"
 objc2 = "0.6.2"
-objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSRunningApplication", "NSWorkspace"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSRunningApplication", "NSWindow", "NSWorkspace"] }
 objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSData", "NSDictionary", "NSString", "NSURL"] }
 plist = "1.7"
 rfd = "0.15"

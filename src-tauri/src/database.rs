@@ -476,6 +476,40 @@ impl Database {
             })
     }
 
+    pub async fn rename_item(&self, id: String, title: String) -> Result<(), AppError> {
+        let title: String = title.trim().chars().take(72).collect();
+        if title.is_empty() {
+            return Err(AppError::Storage("item title cannot be empty".into()));
+        }
+        self.connection
+            .call(move |connection| {
+                let transaction = connection.transaction()?;
+                let (content, files_json): (String, String) = transaction.query_row(
+                    "SELECT content, files_json FROM clipboard_items WHERE id = ?1",
+                    params![id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                transaction.execute(
+                    "UPDATE clipboard_items SET title = ?2 WHERE id = ?1",
+                    params![id, title],
+                )?;
+                let search_text = format!("{title} {content} {files_json}");
+                transaction.execute(
+                    "UPDATE clipboard_fts SET search_text = ?2 WHERE item_id = ?1",
+                    params![id, search_text],
+                )?;
+                transaction.commit()?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| match error {
+                tokio_rusqlite::Error::Error(
+                    tokio_rusqlite::rusqlite::Error::QueryReturnedNoRows,
+                ) => AppError::NotFound,
+                other => AppError::from(other),
+            })
+    }
+
     pub async fn list_groups(&self) -> Result<Vec<Group>, AppError> {
         self.connection.call(|connection| {
             let mut statement = connection.prepare(
@@ -909,6 +943,34 @@ mod tests {
             .as_deref()
             .is_some_and(|value| value.starts_with("data:image/png;base64,")));
         assert_eq!(db.original_image(id).await.unwrap(), png);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn renaming_an_item_updates_its_title_and_search_index() {
+        let root = std::env::temp_dir().join(format!("easyclipboard-test-{}", Uuid::new_v4()));
+        let db = Database::open(&root).await.unwrap();
+        let id = db
+            .insert_capture(capture("original content"))
+            .await
+            .unwrap();
+
+        db.rename_item(id.clone(), "项目接口地址".into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            db.get_item(id.clone()).await.unwrap().summary.title,
+            "项目接口地址"
+        );
+        let results = db
+            .list_items("项目接口".into(), None, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            results.items.first().map(|item| item.id.as_str()),
+            Some(id.as_str())
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

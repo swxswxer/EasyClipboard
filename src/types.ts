@@ -51,6 +51,8 @@ export interface ExcludedApp {
 
 export interface Settings {
   shortcut: string;
+  previousGroupShortcut: string;
+  nextGroupShortcut: string;
   launchAtLogin: boolean;
   recordingPaused: boolean;
   maxItems: 100 | 500 | 1000 | 5000;

@@ -3,7 +3,10 @@ mod desktop;
 mod permissions;
 
 pub use clipboard::{change_token, read_capture, write_item};
-pub use desktop::{activate_and_paste, frontmost_application, open_excluded_app_picker};
+pub use desktop::{
+    activate_and_paste, frontmost_application, open_excluded_app_picker,
+    reveal_window_on_active_space,
+};
 pub use permissions::{
     open_paste_automation_settings, paste_automation_ready, request_paste_automation,
 };
@@ -17,6 +20,8 @@ use crate::models::Settings;
 
 pub const PLATFORM_NAME: &str = "macos";
 pub const DEFAULT_SHORTCUT: &str = "Command+Shift+V";
+pub const DEFAULT_PREVIOUS_GROUP_SHORTCUT: &str = "Command+[";
+pub const DEFAULT_NEXT_GROUP_SHORTCUT: &str = "Command+]";
 pub const SUPPORTS_APP_EXCLUSIONS: bool = true;
 pub const RECORDING_STARTS_AUTOMATICALLY: bool = false;
 

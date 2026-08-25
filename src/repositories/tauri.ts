@@ -30,6 +30,7 @@ export class TauriClipboardRepository implements ClipboardRepository {
   clearRecent(): Promise<void> { return call("clear_recent"); }
   deleteAllData(): Promise<void> { return call("delete_all_data"); }
   setPinned(id: string, pinned: boolean): Promise<void> { return call("set_pinned", { id, pinned }); }
+  renameItem(id: string, title: string): Promise<void> { return call("rename_item", { id, title }); }
   listGroups(): Promise<Group[]> { return call("list_groups"); }
   createGroup(name: string): Promise<Group> { return call("create_group", { name }); }
   renameGroup(id: string, name: string): Promise<void> { return call("rename_group", { id, name }); }
@@ -56,5 +57,8 @@ export class TauriClipboardRepository implements ClipboardRepository {
   }
   subscribePanelShown(callback: () => void): Promise<() => void> {
     return listen("clipboard://shown", callback);
+  }
+  subscribePanelHidden(callback: () => void): Promise<() => void> {
+    return listen("clipboard://hidden", callback);
   }
 }

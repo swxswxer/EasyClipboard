@@ -41,6 +41,8 @@ type DataActionDialogState = {
   busy: boolean;
 };
 
+type ShortcutTarget = "open_panel" | "previous_group" | "next_group";
+
 function DataActionDialog({ state, onCancel, onConfirm }: {
   state: DataActionDialogState;
   onCancel: () => void;
@@ -79,7 +81,7 @@ function DataActionDialog({ state, onCancel, onConfirm }: {
 export function SettingsPage({ repository }: { repository: ClipboardRepository }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [permission, setPermission] = useState<DesktopCapabilities | null>(null);
-  const [recordingShortcut, setRecordingShortcut] = useState(false);
+  const [recordingShortcut, setRecordingShortcut] = useState<ShortcutTarget | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [dataDialog, setDataDialog] = useState<DataActionDialogState | null>(null);
   const messageTimer = useRef<number | null>(null);
@@ -124,14 +126,20 @@ export function SettingsPage({ repository }: { repository: ClipboardRepository }
     catch { notify("设置保存失败"); return null; }
   };
 
-  const commitShortcut = useCallback(async (value: string) => {
-    setRecordingShortcut(false);
+  const commitShortcut = useCallback(async (target: ShortcutTarget, value: string) => {
+    setRecordingShortcut(null);
     try {
-      const next = await repository.setGlobalShortcut(value);
+      const next = target === "open_panel"
+        ? await repository.setGlobalShortcut(value)
+        : await repository.updateSettings(target === "previous_group"
+          ? { previousGroupShortcut: value }
+          : { nextGroupShortcut: value });
       setSettings(next);
-      notify("快捷键已更新");
+      notify(target === "open_panel" ? "快捷键已更新" : "切组快捷键已更新");
     } catch (error) {
-      notify(error instanceof RepositoryError && error.code === "shortcut_conflict" ? "快捷键已被其他应用占用" : "快捷键设置失败");
+      notify(target === "open_panel" && error instanceof RepositoryError && error.code === "shortcut_conflict"
+        ? "快捷键已被其他应用占用"
+        : "快捷键设置失败");
     }
   }, [notify, repository]);
 
@@ -141,12 +149,12 @@ export function SettingsPage({ repository }: { repository: ClipboardRepository }
       event.preventDefault();
       event.stopPropagation();
       if (event.key === "Escape") {
-        setRecordingShortcut(false);
+        setRecordingShortcut(null);
         return;
       }
       if (event.repeat) return;
       const value = shortcutFromEvent(event);
-      if (value) void commitShortcut(value);
+      if (value) void commitShortcut(recordingShortcut, value);
     };
     window.addEventListener("keydown", captureShortcut, true);
     return () => window.removeEventListener("keydown", captureShortcut, true);
@@ -224,8 +232,16 @@ export function SettingsPage({ repository }: { repository: ClipboardRepository }
 
           <section className="settings-section"><h2>快捷键与粘贴</h2><div className="settings-card">
             <div className="setting-row"><div><strong>打开剪贴板</strong><span>点击右侧后按下新的组合键</span></div>
-              <button type="button" className={`shortcut-recorder ${recordingShortcut ? "recording" : ""}`} aria-pressed={recordingShortcut}
-                onClick={() => setRecordingShortcut((current) => !current)}>{recordingShortcut ? "请按组合键…（Esc 取消）" : formatShortcut(settings.shortcut, permission?.platform)}</button>
+              <button type="button" className={`shortcut-recorder ${recordingShortcut === "open_panel" ? "recording" : ""}`} aria-pressed={recordingShortcut === "open_panel"}
+                onClick={() => setRecordingShortcut((current) => current === "open_panel" ? null : "open_panel")}>{recordingShortcut === "open_panel" ? "请按组合键…（Esc 取消）" : formatShortcut(settings.shortcut, permission?.platform)}</button>
+            </div>
+            <div className="setting-row"><div><strong>上一组</strong><span>主面板打开时切换到上一个分组</span></div>
+              <button type="button" className={`shortcut-recorder ${recordingShortcut === "previous_group" ? "recording" : ""}`} aria-pressed={recordingShortcut === "previous_group"}
+                onClick={() => setRecordingShortcut((current) => current === "previous_group" ? null : "previous_group")}>{recordingShortcut === "previous_group" ? "请按组合键…（Esc 取消）" : formatShortcut(settings.previousGroupShortcut, permission?.platform)}</button>
+            </div>
+            <div className="setting-row"><div><strong>下一组</strong><span>主面板打开时切换到下一个分组</span></div>
+              <button type="button" className={`shortcut-recorder ${recordingShortcut === "next_group" ? "recording" : ""}`} aria-pressed={recordingShortcut === "next_group"}
+                onClick={() => setRecordingShortcut((current) => current === "next_group" ? null : "next_group")}>{recordingShortcut === "next_group" ? "请按组合键…（Esc 取消）" : formatShortcut(settings.nextGroupShortcut, permission?.platform)}</button>
             </div>
             {permission?.platform === "macos" && <>
               <div className="setting-row"><div><strong>辅助功能权限</strong><span>EasyClipboard 使用此权限切回目标应用并完成粘贴</span></div><span className={`permission-status ${permission.pasteAutomation === "ready" ? "granted" : "required"}`}>{permission.pasteAutomation === "ready" ? "已开启" : "必须开启"}</span></div>

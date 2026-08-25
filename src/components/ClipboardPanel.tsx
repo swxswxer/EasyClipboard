@@ -2,11 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState, type UIEvent } from "reac
 import {
   ArrowDown, ArrowElbowDownLeft, ArrowUp, File, FolderPlus,
   ImageSquare, Infinity as InfinityIcon, MagnifyingGlass, Pause, Play,
-  Plus, PushPin, ShieldCheck, TextT, Trash, X,
+  PencilSimple, Plus, PushPin, ShieldCheck, TextT, Trash, X,
 } from "@phosphor-icons/react";
 import type { ClipboardItemDetail, ClipboardItemSummary, Group, DesktopCapabilities } from "../types";
 
-export type PanelDialogState = { mode: "create" | "rename" | "delete" | "delete_item"; groupId?: string; itemId?: string; initialName?: string } | null;
+export type PanelDialogState = { mode: "create" | "rename" | "rename_item" | "delete" | "delete_item"; groupId?: string; itemId?: string; initialName?: string } | null;
 export type MenuState = { type: "move"; itemId: string } | null;
 
 interface ClipboardPanelProps {
@@ -24,6 +24,8 @@ interface ClipboardPanelProps {
   recordingPaused: boolean;
   permission: DesktopCapabilities | null;
   searchFocusRequest: number;
+  previousGroupShortcut: string;
+  nextGroupShortcut: string;
   onSetActiveGroup: (id: string) => void;
   onSetQuery: (value: string) => void;
   onSelect: (id: string) => void;
@@ -34,6 +36,7 @@ interface ClipboardPanelProps {
   onToggleMoveMenu: (id: string) => void;
   onMoveItem: (id: string, groupId: string | null) => void;
   onTogglePin: (item: ClipboardItemSummary) => void;
+  onRenameItem: (item: ClipboardItemSummary) => void;
   onDeleteItem: (id: string) => void;
   onPaste: (item: ClipboardItemSummary) => void;
   onClosePanel: () => void;
@@ -46,6 +49,40 @@ interface ClipboardPanelProps {
 
 function KeyHint({ label, icon: Icon }: { label?: string; icon?: typeof ArrowUp }) {
   return <span className="key-hint"><span className="keycap">{Icon ? <Icon weight="bold" /> : label}</span></span>;
+}
+
+function shortcutFromEvent(event: globalThis.KeyboardEvent) {
+  const modifiers: string[] = [];
+  if (event.metaKey) modifiers.push("Command");
+  if (event.ctrlKey) modifiers.push("Control");
+  if (event.altKey) modifiers.push("Alt");
+  if (event.shiftKey) modifiers.push("Shift");
+  const key = event.code === "BracketLeft"
+    ? "["
+    : event.code === "BracketRight"
+      ? "]"
+      : event.code.startsWith("Key")
+        ? event.code.slice(3)
+        : event.code.startsWith("Digit")
+          ? event.code.slice(5)
+          : event.key.length === 1
+            ? event.key.toUpperCase()
+            : event.key;
+  return [...modifiers, key].join("+");
+}
+
+function groupSwitchDirection(event: globalThis.KeyboardEvent, previous: string, next: string): -1 | 1 | null {
+  const shortcut = shortcutFromEvent(event);
+  if (shortcut === previous) return -1;
+  if (shortcut === next) return 1;
+  return null;
+}
+
+function compactShortcut(value: string, platform?: DesktopCapabilities["platform"]) {
+  const labels = platform === "windows"
+    ? { Command: "Win", Control: "Ctrl", Shift: "Shift", Alt: "Alt" }
+    : { Command: "⌘", Control: "⌃", Shift: "⇧", Alt: "⌥" };
+  return value.split("+").map((part) => labels[part as keyof typeof labels] ?? part).join("");
 }
 
 function PanelDialog({ state, onCancel, onSubmit, onDelete }: {
@@ -72,14 +109,15 @@ function PanelDialog({ state, onCancel, onSubmit, onDelete }: {
     </div>
     );
   }
+  const renamingItem = state.mode === "rename_item";
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onCancel}>
       <form className="group-dialog" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => {
         event.preventDefault(); if (name.trim()) onSubmit(name.trim());
       }}>
-        <div className="dialog-title">{state.mode === "create" ? "新建分组" : "重命名分组"}</div>
-        <label>分组名称<input ref={input} value={name} maxLength={20} onChange={(event) => setName(event.target.value)} placeholder="例如：项目资料" /></label>
-        <p>分组内的内容会永久保留，直到你主动删除。</p>
+        <div className="dialog-title">{state.mode === "create" ? "新建分组" : renamingItem ? "修改项目标题" : "重命名分组"}</div>
+        <label>{renamingItem ? "项目标题" : "分组名称"}<input ref={input} value={name} maxLength={renamingItem ? 72 : 20} onChange={(event) => setName(event.target.value)} placeholder={renamingItem ? "输入便于识别的标题" : "例如：项目资料"} /></label>
+        <p>{renamingItem ? "仅修改列表中的显示标题，不会改变剪贴板内容。" : "分组内的内容会永久保留，直到你主动删除。"}</p>
         <div className="dialog-actions">
           <button className="button secondary" type="button" onClick={onCancel}>取消</button>
           <button className="button primary" type="submit" disabled={!name.trim()}>{state.mode === "create" ? "创建" : "保存"}</button>
@@ -157,12 +195,25 @@ export function ClipboardPanel(props: ClipboardPanelProps) {
         tabNavigationActive.current = true;
         return;
       }
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (currentProps.dialog) {
         if (event.key === "Escape") { event.preventDefault(); currentProps.onCloseDialog(); }
         return;
       }
       if (currentProps.menu || currentProps.permission?.pasteAutomation !== "ready" || currentProps.permission.clipboardAccess !== "ready") return;
+      const switchDirection = groupSwitchDirection(event, currentProps.previousGroupShortcut, currentProps.nextGroupShortcut);
+      if (switchDirection !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        const groupIds = ["recent", ...currentProps.groups.map((group) => group.id)];
+        const currentIndex = groupIds.indexOf(currentProps.activeGroup);
+        const safeIndex = currentIndex < 0 ? 0 : currentIndex;
+        const nextIndex = (safeIndex + switchDirection + groupIds.length) % groupIds.length;
+        tabNavigationActive.current = false;
+        currentProps.onSetActiveGroup(groupIds[nextIndex]);
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
       const searchFocused = Boolean(target?.matches('input[aria-label="搜索剪贴板"]'));
       const rowFocused = Boolean(target?.closest(".item-row"));
       const tabFocusedControl = tabNavigationActive.current
@@ -259,13 +310,19 @@ export function ClipboardPanel(props: ClipboardPanelProps) {
                   </div>
                 )}
               </div>
+              <button className="icon-button action" aria-label="修改标题" onClick={() => props.onRenameItem(selected)}><PencilSimple /></button>
               <button className="icon-button action danger" aria-label="删除" onClick={() => props.onDeleteItem(selected.id)}><Trash /></button>
               <button className="paste-button" onClick={() => props.onPaste(selected)}>粘贴 <ArrowElbowDownLeft weight="bold" /></button>
             </div>
           )}
         </div>
       </div>
-      <div className="shortcut-row"><span><KeyHint icon={ArrowUp} /><KeyHint icon={ArrowDown} /> 选择</span><span><KeyHint label="Enter" /> 粘贴</span><span><KeyHint label="Esc" /> 关闭</span></div>
+      <div className="shortcut-row">
+        <span><KeyHint icon={ArrowUp} /><KeyHint icon={ArrowDown} /> 选择</span>
+        <span><KeyHint label="Enter" /> 粘贴</span>
+        <span><KeyHint label={`${compactShortcut(props.previousGroupShortcut, props.permission?.platform)} / ${compactShortcut(props.nextGroupShortcut, props.permission?.platform)}`} /> 切换分组</span>
+        <span><KeyHint label="Esc" /> 关闭</span>
+      </div>
       {props.toast && <div className="toast" role="status">{props.toast}</div>}
       {props.permission === null && (
         <div className="dialog-backdrop"><div className="permission-card loading-permission" role="status"><div className="permission-icon"><ShieldCheck /></div><h2>正在检查系统权限…</h2></div></div>

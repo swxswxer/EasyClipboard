@@ -98,4 +98,40 @@ describe("App", () => {
     await waitFor(() => expect(listItems).toHaveBeenCalled());
     expect(listItems.mock.calls.every(([options]) => options.groupId === "common")).toBe(true);
   });
+
+  it("dismisses transient menus and dialogs when the panel is hidden", async () => {
+    render(<App />);
+    await screen.findByRole("option", { name: /收到，我整理后今天发给你/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "移入分组" }));
+    expect(screen.getByText("已选择")).toBeInTheDocument();
+
+    await act(async () => {
+      await repository.hidePanel();
+    });
+    expect(screen.queryByText("已选择")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /新建分组/ }));
+    expect(screen.getByText("分组名称")).toBeInTheDocument();
+
+    await act(async () => {
+      await repository.hidePanel();
+    });
+    expect(screen.queryByText("分组名称")).not.toBeInTheDocument();
+  });
+
+  it("renames a clipboard item without changing its content", async () => {
+    const renameItem = vi.spyOn(repository, "renameItem");
+    render(<App />);
+    await screen.findByRole("option", { name: /收到，我整理后今天发给你/ });
+
+    fireEvent.click(await screen.findByRole("button", { name: "修改标题" }));
+    const titleInput = screen.getByLabelText("项目标题");
+    fireEvent.change(titleInput, { target: { value: "今日待回复" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(renameItem).toHaveBeenCalledWith("1", "今日待回复"));
+    expect(await screen.findByRole("option", { name: /今日待回复/ })).toBeInTheDocument();
+    expect((await repository.getItem("1")).content).toBe("收到，我整理后今天发给你。");
+  });
 });

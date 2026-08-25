@@ -12,7 +12,8 @@ pub fn toggle_clipboard(app: &AppHandle) -> Result<(), AppError> {
         .is_visible()
         .map_err(|_| AppError::ClipboardUnavailable)?
     {
-        window.hide().map_err(|_| AppError::ClipboardUnavailable)
+        hide_clipboard(app);
+        Ok(())
     } else {
         show_clipboard(app)
     }
@@ -62,6 +63,7 @@ pub fn show_clipboard(app: &AppHandle) -> Result<(), AppError> {
             .map_err(|_| AppError::ClipboardUnavailable)?;
     }
     window.show().map_err(|_| AppError::ClipboardUnavailable)?;
+    platform::reveal_window_on_active_space(&window)?;
     window
         .set_focus()
         .map_err(|_| AppError::ClipboardUnavailable)?;
@@ -71,7 +73,10 @@ pub fn show_clipboard(app: &AppHandle) -> Result<(), AppError> {
 
 pub fn hide_clipboard(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("clipboard") {
-        let _ = window.hide();
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.emit("clipboard://hidden", ());
+            let _ = window.hide();
+        }
     }
 }
 

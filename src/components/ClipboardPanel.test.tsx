@@ -21,10 +21,12 @@ function props(overrides: Partial<ComponentProps<typeof ClipboardPanel>> = {}): 
   return {
     groups, items: [olderPinned, newest], activeGroup: "recent", query: "", selectedId: null, detail: null,
     dialog: null, menu: null, toast: null, nextCursor: null, loading: false, recordingPaused: false,
+    previousGroupShortcut: "Command+[",
+    nextGroupShortcut: "Command+]",
     permission: { platform: "macos", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: true }, searchFocusRequest: 0, onSetActiveGroup: vi.fn(), onSetQuery: vi.fn(),
     onSelect: vi.fn(), onOpenDialog: vi.fn(), onCloseDialog: vi.fn(), onSubmitDialog: vi.fn(),
     onConfirmDelete: vi.fn(), onToggleMoveMenu: vi.fn(), onMoveItem: vi.fn(), onTogglePin: vi.fn(),
-    onDeleteItem: vi.fn(), onPaste: vi.fn(), onClosePanel: vi.fn(), onLoadMore: vi.fn(),
+    onRenameItem: vi.fn(), onDeleteItem: vi.fn(), onPaste: vi.fn(), onClosePanel: vi.fn(), onLoadMore: vi.fn(),
     onToggleRecording: vi.fn(), onStartRecording: vi.fn(), onRequestPasteAutomationAccess: vi.fn(),
     onOpenPasteAutomationSettings: vi.fn(), ...overrides,
   };
@@ -117,6 +119,54 @@ describe("ClipboardPanel", () => {
     rerender(<ClipboardPanel {...initial} selectedId="older" />);
     fireEvent.keyDown(document.activeElement ?? emptyArea!, { key: "Enter", code: "Enter" });
     expect(onPaste).toHaveBeenCalledWith(olderPinned);
+  });
+
+  it("cycles groups with Command plus brackets on macOS", () => {
+    const onSetActiveGroup = vi.fn();
+    const initial = props({ activeGroup: "recent", onSetActiveGroup });
+    const { rerender } = render(<ClipboardPanel {...initial} />);
+    const panel = screen.getByLabelText("剪贴板面板");
+
+    expect(fireEvent.keyDown(panel, { key: "]", code: "BracketRight", metaKey: true })).toBe(false);
+    expect(onSetActiveGroup).toHaveBeenLastCalledWith("common");
+
+    rerender(<ClipboardPanel {...initial} activeGroup="common" />);
+    fireEvent.keyDown(panel, { key: "]", code: "BracketRight", metaKey: true });
+    expect(onSetActiveGroup).toHaveBeenLastCalledWith("recent");
+
+    rerender(<ClipboardPanel {...initial} activeGroup="recent" />);
+    fireEvent.keyDown(panel, { key: "[", code: "BracketLeft", metaKey: true });
+    expect(onSetActiveGroup).toHaveBeenLastCalledWith("common");
+  });
+
+  it("cycles groups with Control plus brackets on Windows", () => {
+    const onSetActiveGroup = vi.fn();
+    render(<ClipboardPanel {...props({
+      activeGroup: "common",
+      permission: { platform: "windows", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: false },
+      previousGroupShortcut: "Control+[",
+      nextGroupShortcut: "Control+]",
+      onSetActiveGroup,
+    })} />);
+    const panel = screen.getByLabelText("剪贴板面板");
+
+    fireEvent.keyDown(panel, { key: "[", code: "BracketLeft", ctrlKey: true });
+    expect(onSetActiveGroup).toHaveBeenLastCalledWith("recent");
+    fireEvent.keyDown(panel, { key: "]", code: "BracketRight", metaKey: true });
+    expect(onSetActiveGroup).toHaveBeenCalledOnce();
+  });
+
+  it("does not switch groups while a dialog or move menu owns keyboard input", () => {
+    const onSetActiveGroup = vi.fn();
+    const initial = props({ onSetActiveGroup, dialog: { mode: "create" } });
+    const { rerender } = render(<ClipboardPanel {...initial} />);
+
+    fireEvent.keyDown(screen.getByPlaceholderText("例如：项目资料"), { key: "]", code: "BracketRight", metaKey: true });
+    expect(onSetActiveGroup).not.toHaveBeenCalled();
+
+    rerender(<ClipboardPanel {...props({ onSetActiveGroup, menu: { type: "move", itemId: "newest" }, selectedId: "newest" })} />);
+    fireEvent.keyDown(screen.getByLabelText("剪贴板面板"), { key: "]", code: "BracketRight", metaKey: true });
+    expect(onSetActiveGroup).not.toHaveBeenCalled();
   });
 
   it("preserves Return activation for controls reached with Tab", () => {

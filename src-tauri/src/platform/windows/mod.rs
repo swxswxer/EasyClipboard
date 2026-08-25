@@ -3,7 +3,7 @@ mod desktop;
 mod permissions;
 
 pub use clipboard::{change_token, install_clipboard_listener, read_capture, write_item};
-pub use desktop::{activate_and_paste, frontmost_application};
+pub use desktop::{activate_and_paste, frontmost_application, reveal_window_on_active_space};
 pub use permissions::{
     open_paste_automation_settings, paste_automation_ready, request_paste_automation,
 };
@@ -20,6 +20,8 @@ use crate::{
 
 pub const PLATFORM_NAME: &str = "windows";
 pub const DEFAULT_SHORTCUT: &str = "Control+Shift+V";
+pub const DEFAULT_PREVIOUS_GROUP_SHORTCUT: &str = "Control+[";
+pub const DEFAULT_NEXT_GROUP_SHORTCUT: &str = "Control+]";
 pub const SUPPORTS_APP_EXCLUSIONS: bool = false;
 pub const RECORDING_STARTS_AUTOMATICALLY: bool = true;
 

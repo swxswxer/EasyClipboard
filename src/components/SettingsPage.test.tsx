@@ -15,6 +15,20 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("快捷键已更新")).toBeInTheDocument();
   });
 
+  it("saves configurable previous and next group shortcuts", async () => {
+    const repository = new TestClipboardRepository();
+    const updateSettings = vi.spyOn(repository, "updateSettings");
+    render(<SettingsPage repository={repository} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "⌘ [" }));
+    fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ previousGroupShortcut: "Command+Shift+ArrowLeft" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "⌘ ]" }));
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ nextGroupShortcut: "Command+Shift+ArrowRight" }));
+  });
+
   it("closes through the repository window command", async () => {
     const repository = new TestClipboardRepository();
     const closeSettings = vi.spyOn(repository, "closeSettings").mockResolvedValue();
@@ -55,7 +69,8 @@ describe("SettingsPage", () => {
       platform: "windows", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: false,
     });
     vi.spyOn(repository, "getSettings").mockResolvedValue({
-      shortcut: "Control+Shift+V", launchAtLogin: false, recordingPaused: false,
+      shortcut: "Control+Shift+V", previousGroupShortcut: "Control+[",
+      nextGroupShortcut: "Control+]", launchAtLogin: false, recordingPaused: false,
       maxItems: 500, retentionDays: 30, excludedApps: [],
     });
     render(<SettingsPage repository={repository} />);

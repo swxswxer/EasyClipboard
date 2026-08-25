@@ -72,6 +72,10 @@ pub struct ExcludedApp {
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub shortcut: String,
+    #[serde(default = "default_previous_group_shortcut")]
+    pub previous_group_shortcut: String,
+    #[serde(default = "default_next_group_shortcut")]
+    pub next_group_shortcut: String,
     pub launch_at_login: bool,
     pub recording_paused: bool,
     pub max_items: u32,
@@ -108,6 +112,8 @@ impl Default for Settings {
         let excluded_apps = vec![];
         Self {
             shortcut: crate::platform::DEFAULT_SHORTCUT.into(),
+            previous_group_shortcut: default_previous_group_shortcut(),
+            next_group_shortcut: default_next_group_shortcut(),
             launch_at_login: false,
             recording_paused: false,
             max_items: 500,
@@ -115,6 +121,14 @@ impl Default for Settings {
             excluded_apps,
         }
     }
+}
+
+fn default_previous_group_shortcut() -> String {
+    crate::platform::DEFAULT_PREVIOUS_GROUP_SHORTCUT.into()
+}
+
+fn default_next_group_shortcut() -> String {
+    crate::platform::DEFAULT_NEXT_GROUP_SHORTCUT.into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -158,6 +172,14 @@ mod tests {
         }"#;
         let settings: Settings = serde_json::from_str(legacy).unwrap();
         assert_eq!(settings.shortcut, "Command+Shift+V");
+        assert_eq!(
+            settings.previous_group_shortcut,
+            crate::platform::DEFAULT_PREVIOUS_GROUP_SHORTCUT
+        );
+        assert_eq!(
+            settings.next_group_shortcut,
+            crate::platform::DEFAULT_NEXT_GROUP_SHORTCUT
+        );
         assert_eq!(
             serde_json::to_value(settings).unwrap()["autoPasteEnabled"],
             serde_json::Value::Null

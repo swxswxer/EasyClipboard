@@ -23,6 +23,7 @@ export interface ClipboardRepository {
   clearRecent(): Promise<void>;
   deleteAllData(): Promise<void>;
   setPinned(id: string, pinned: boolean): Promise<void>;
+  renameItem(id: string, title: string): Promise<void>;
   listGroups(): Promise<Group[]>;
   createGroup(name: string): Promise<Group>;
   renameGroup(id: string, name: string): Promise<void>;
@@ -41,4 +42,5 @@ export interface ClipboardRepository {
   subscribeChanged(callback: () => void): Promise<() => void>;
   subscribeSettingsChanged(callback: () => void): Promise<() => void>;
   subscribePanelShown(callback: () => void): Promise<() => void>;
+  subscribePanelHidden(callback: () => void): Promise<() => void>;
 }
