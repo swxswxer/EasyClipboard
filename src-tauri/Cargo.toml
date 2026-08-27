@@ -1,6 +1,6 @@
 [package]
 name = "easyclipboard"
-version = "0.1.2"
+version = "0.1.3"
 description = "Local-first Windows and macOS clipboard history"
 authors = ["EasyClipboard"]
 edition = "2021"

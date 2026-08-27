@@ -34,6 +34,7 @@ interface ClipboardPanelProps {
   onSubmitDialog: (name: string) => void;
   onConfirmDelete: () => void;
   onToggleMoveMenu: (id: string) => void;
+  onCloseMenu: () => void;
   onMoveItem: (id: string, groupId: string | null) => void;
   onTogglePin: (item: ClipboardItemSummary) => void;
   onRenameItem: (item: ClipboardItemSummary) => void;
@@ -186,7 +187,12 @@ export function ClipboardPanel(props: ClipboardPanelProps) {
   }, [selected?.id]);
 
   useEffect(() => {
-    const handlePointerDown = () => { tabNavigationActive.current = false; };
+    const handlePointerDown = (event: PointerEvent) => {
+      tabNavigationActive.current = false;
+      const { props: currentProps } = keyboardState.current;
+      const target = event.target as Element | null;
+      if (currentProps.menu && !target?.closest(".move-action-wrap")) currentProps.onCloseMenu();
+    };
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       const { props: currentProps, selected: currentSelected } = keyboardState.current;
       const target = event.target as HTMLElement | null;
@@ -199,7 +205,15 @@ export function ClipboardPanel(props: ClipboardPanelProps) {
         if (event.key === "Escape") { event.preventDefault(); currentProps.onCloseDialog(); }
         return;
       }
-      if (currentProps.menu || currentProps.permission?.pasteAutomation !== "ready" || currentProps.permission.clipboardAccess !== "ready") return;
+      if (currentProps.menu) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          currentProps.onCloseMenu();
+        }
+        return;
+      }
+      if (currentProps.permission?.pasteAutomation !== "ready" || currentProps.permission.clipboardAccess !== "ready") return;
       const switchDirection = groupSwitchDirection(event, currentProps.previousGroupShortcut, currentProps.nextGroupShortcut);
       if (switchDirection !== null) {
         event.preventDefault();
@@ -305,7 +319,7 @@ export function ClipboardPanel(props: ClipboardPanelProps) {
                 <button className="icon-button action" aria-label="移入分组" onClick={() => props.onToggleMoveMenu(selected.id)}><FolderPlus /></button>
                 {props.menu?.type === "move" && (
                   <div className="popover move-popover"><strong>移入分组</strong>
-                    {props.groups.map((group) => <button key={group.id} className={selected.groupId === group.id ? "checked" : ""} onClick={() => props.onMoveItem(selected.id, group.id)}>{group.name}{selected.groupId === group.id && <span>已选择</span>}</button>)}
+                    {props.groups.map((group) => <button key={group.id} aria-label={`移入分组 ${group.name}`} className={selected.groupId === group.id ? "checked" : ""} onClick={() => props.onMoveItem(selected.id, group.id)}>{group.name}{selected.groupId === group.id && <span>已选择</span>}</button>)}
                     {selected.groupId && <button onClick={() => props.onMoveItem(selected.id, null)}>移出分组</button>}
                   </div>
                 )}

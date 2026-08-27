@@ -46,7 +46,6 @@ function ClipboardApp() {
   const toastTimer = useRef<number | null>(null);
   const requestToken = useRef(0);
   const nextCursor = useRef<string | null>(null);
-  const selectNewestAfterLoad = useRef(false);
 
   const notify = useCallback((message: string) => {
     setToast(message); if (toastTimer.current) window.clearTimeout(toastTimer.current);
@@ -59,7 +58,7 @@ function ClipboardApp() {
 
   useEffect(() => { const timer = window.setTimeout(() => setDebouncedQuery(query), 150); return () => window.clearTimeout(timer); }, [query]);
 
-  const load = useCallback(async (append = false) => {
+  const load = useCallback(async (append = false, selectFirst = false) => {
     const token = ++requestToken.current;
     setLoading(true);
     try {
@@ -67,12 +66,8 @@ function ClipboardApp() {
       if (token !== requestToken.current) return;
       nextCursor.current = next.nextCursor;
       setPage((current) => ({ items: append ? [...current.items, ...next.items] : next.items, nextCursor: next.nextCursor }));
-      if (!append && selectNewestAfterLoad.current) {
-        selectNewestAfterLoad.current = false;
-        const newest = next.items.reduce<ClipboardItemSummary | null>((latest, item) => (
-          !latest || item.copiedAt > latest.copiedAt ? item : latest
-        ), null);
-        setSelectedId(newest?.id ?? null);
+      if (!append && selectFirst) {
+        setSelectedId(next.items[0]?.id ?? null);
       }
     } catch (error) { notify(errorText(error)); }
     finally { if (token === requestToken.current) setLoading(false); }
@@ -96,7 +91,7 @@ function ClipboardApp() {
   useEffect(() => { loadRef.current = load; }, [load]);
   useEffect(() => { refreshPermissionRef.current = refreshPermission; }, [refreshPermission]);
 
-  useEffect(() => { void load(false); }, [load]);
+  useEffect(() => { void load(false, true); }, [load]);
   useEffect(() => {
     let active = true;
     void Promise.all([repository.listGroups(), repository.getSettings(), repository.getDesktopCapabilities()]).then(([nextGroups, nextSettings, nextPermission]) => {
@@ -136,10 +131,9 @@ function ClipboardApp() {
     let disposed = false;
     let cleanup: (() => void) | undefined;
     void repository.subscribePanelShown(() => {
-      selectNewestAfterLoad.current = true;
       setSearchFocusRequest((current) => current + 1);
       void refreshPermissionRef.current();
-      void loadRef.current(false);
+      void loadRef.current(false, true);
     }).then((value) => {
       if (disposed) value(); else cleanup = value;
     }).catch((error) => { if (!disposed) notify(errorText(error)); });
@@ -150,6 +144,14 @@ function ClipboardApp() {
     let disposed = false;
     let cleanup: (() => void) | undefined;
     void repository.subscribePanelHidden(() => {
+      requestToken.current += 1;
+      nextCursor.current = null;
+      setActiveGroup("recent");
+      setQuery("");
+      setDebouncedQuery("");
+      setSelectedId(null);
+      setDetail(null);
+      setPage({ items: [], nextCursor: null });
       setDialog(null);
       setMenu(null);
       setToast(null);
@@ -217,7 +219,6 @@ function ClipboardApp() {
       setDialog(null);
       setMenu(null);
       if (deletingActiveGroup) {
-        selectNewestAfterLoad.current = true;
         setActiveGroup("recent");
         setQuery("");
         setSelectedId(null);
@@ -278,11 +279,17 @@ function ClipboardApp() {
       searchFocusRequest={searchFocusRequest}
       previousGroupShortcut={settings?.previousGroupShortcut ?? (permission?.platform === "windows" ? "Control+[" : "Command+[")}
       nextGroupShortcut={settings?.nextGroupShortcut ?? (permission?.platform === "windows" ? "Control+]" : "Command+]")}
-      onSetActiveGroup={(id) => { setActiveGroup(id); setQuery(""); setMenu(null); setSelectedId(null); }} onSetQuery={setQuery} onSelect={setSelectedId}
+      onSetActiveGroup={(id) => { setActiveGroup(id); setQuery(""); setMenu(null); setSelectedId(null); }}
+      onSetQuery={setQuery}
+      onSelect={setSelectedId}
       onOpenDialog={(mode, group) => { setMenu(null); setDialog({ mode, groupId: group?.id, initialName: group?.name }); }} onCloseDialog={() => setDialog(null)} onSubmitDialog={(name) => void submitDialog(name)}
       onConfirmDelete={() => void confirmDelete()}
       onToggleMoveMenu={(id) => setMenu((current) => current?.type === "move" && current.itemId === id ? null : { type: "move", itemId: id })}
-      onMoveItem={(id, groupId) => void run(() => repository.moveItem(id, groupId), groupId ? "已移入分组，内容将永久保留" : "已移出分组")}
+      onCloseMenu={() => setMenu(null)}
+      onMoveItem={(id, groupId) => {
+        setMenu(null);
+        void run(() => repository.moveItem(id, groupId), groupId ? "已移入分组，内容将永久保留" : "已移出分组");
+      }}
       onTogglePin={(item) => void run(() => repository.setPinned(item.id, !item.pinned))}
       onRenameItem={(item) => { setMenu(null); setDialog({ mode: "rename_item", itemId: item.id, initialName: item.title }); }}
       onDeleteItem={(id) => { setMenu(null); setDialog({ mode: "delete_item", itemId: id }); }}

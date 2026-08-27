@@ -30,6 +30,20 @@ describe("App", () => {
     expect(listItems.mock.calls.some(([options]) => options.query === "MVP")).toBe(true);
   });
 
+  it("selects the first item after clearing a search", async () => {
+    render(<App />);
+    const search = await screen.findByLabelText("搜索剪贴板");
+
+    fireEvent.change(search, { target: { value: "MVP" } });
+    const matched = await screen.findByRole("option", { name: /MVP 只保留基础剪贴板功能/ });
+    await waitFor(() => expect(matched).toHaveAttribute("aria-selected", "true"));
+
+    fireEvent.change(search, { target: { value: "" } });
+    const newest = await screen.findByRole("option", { name: /收到，我整理后今天发给你/ });
+    await waitFor(() => expect(newest).toHaveAttribute("aria-selected", "true"));
+    expect(matched).toHaveAttribute("aria-selected", "false");
+  });
+
   it("pastes a selected item without a copy-only fallback", async () => {
     const pasteItem = vi.spyOn(repository, "pasteItem");
     render(<App />);
@@ -118,6 +132,43 @@ describe("App", () => {
       await repository.hidePanel();
     });
     expect(screen.queryByText("分组名称")).not.toBeInTheDocument();
+  });
+
+  it("closes the move menu after moving an item into or out of a group", async () => {
+    const moveItem = vi.spyOn(repository, "moveItem");
+    render(<App />);
+    await screen.findByRole("option", { name: /收到，我整理后今天发给你/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "移入分组" }));
+    fireEvent.click(screen.getByRole("button", { name: "移入分组 代码片段" }));
+    await waitFor(() => expect(moveItem).toHaveBeenCalledWith("1", "code"));
+    expect(screen.queryByText("已选择")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "移入分组" }));
+    fireEvent.click(await screen.findByRole("button", { name: "移出分组" }));
+    await waitFor(() => expect(moveItem).toHaveBeenCalledWith("1", null));
+    expect(screen.queryByRole("button", { name: "移出分组" })).not.toBeInTheDocument();
+  });
+
+  it("resets search, group, selection and overlays when the panel is hidden", async () => {
+    const listItems = vi.spyOn(repository, "listItems");
+    render(<App />);
+    const search = await screen.findByLabelText("搜索剪贴板");
+    fireEvent.click(screen.getByRole("button", { name: "常用回复" }));
+    fireEvent.change(search, { target: { value: "收到" } });
+    await waitFor(() => expect(listItems.mock.calls.some(([options]) => options.query === "收到" && options.groupId === "common")).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: /新建分组/ }));
+    expect(screen.getByText("分组名称")).toBeInTheDocument();
+
+    await act(async () => {
+      await repository.hidePanel();
+    });
+
+    expect(search).toHaveValue("");
+    expect(screen.queryByText("分组名称")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "最近" })).toHaveClass("active");
+    await waitFor(() => expect(listItems.mock.calls.some(([options]) => options.query === "" && options.groupId === null)).toBe(true));
+    await waitFor(() => expect(screen.getByRole("option", { name: /收到，我整理后今天发给你/ })).toHaveAttribute("aria-selected", "true"));
   });
 
   it("renames a clipboard item without changing its content", async () => {

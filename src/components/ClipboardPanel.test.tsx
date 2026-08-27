@@ -25,7 +25,7 @@ function props(overrides: Partial<ComponentProps<typeof ClipboardPanel>> = {}): 
     nextGroupShortcut: "Command+]",
     permission: { platform: "macos", clipboardAccess: "ready", pasteAutomation: "ready", supportsAppExclusions: true }, searchFocusRequest: 0, onSetActiveGroup: vi.fn(), onSetQuery: vi.fn(),
     onSelect: vi.fn(), onOpenDialog: vi.fn(), onCloseDialog: vi.fn(), onSubmitDialog: vi.fn(),
-    onConfirmDelete: vi.fn(), onToggleMoveMenu: vi.fn(), onMoveItem: vi.fn(), onTogglePin: vi.fn(),
+    onConfirmDelete: vi.fn(), onToggleMoveMenu: vi.fn(), onCloseMenu: vi.fn(), onMoveItem: vi.fn(), onTogglePin: vi.fn(),
     onRenameItem: vi.fn(), onDeleteItem: vi.fn(), onPaste: vi.fn(), onClosePanel: vi.fn(), onLoadMore: vi.fn(),
     onToggleRecording: vi.fn(), onStartRecording: vi.fn(), onRequestPasteAutomationAccess: vi.fn(),
     onOpenPasteAutomationSettings: vi.fn(), ...overrides,
@@ -167,6 +167,19 @@ describe("ClipboardPanel", () => {
     rerender(<ClipboardPanel {...props({ onSetActiveGroup, menu: { type: "move", itemId: "newest" }, selectedId: "newest" })} />);
     fireEvent.keyDown(screen.getByLabelText("剪贴板面板"), { key: "]", code: "BracketRight", metaKey: true });
     expect(onSetActiveGroup).not.toHaveBeenCalled();
+  });
+
+  it("closes the move menu when clicking outside or pressing Escape", () => {
+    const onCloseMenu = vi.fn();
+    const initial = props({ menu: { type: "move", itemId: "newest" }, selectedId: "newest", onCloseMenu });
+    const { rerender } = render(<ClipboardPanel {...initial} />);
+
+    fireEvent.pointerDown(screen.getByLabelText("搜索剪贴板"));
+    expect(onCloseMenu).toHaveBeenCalledOnce();
+
+    rerender(<ClipboardPanel {...initial} />);
+    fireEvent.keyDown(screen.getByLabelText("剪贴板面板"), { key: "Escape", code: "Escape" });
+    expect(onCloseMenu).toHaveBeenCalledTimes(2);
   });
 
   it("preserves Return activation for controls reached with Tab", () => {
