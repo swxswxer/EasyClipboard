@@ -24,6 +24,54 @@
 
 EasyClipboard 会在本机记录你复制过的文本、图片和文件，让它们可以被快速搜索、整理并再次粘贴。所有历史数据默认只保存在当前设备，不需要账号，也不依赖云服务。
 
+<p align="center">
+  <img src="docs/assets/easyclipboard-demo.gif" width="1040" alt="EasyClipboard：快捷键唤起、直接搜索、键盘粘贴并使用分组永久保存内容">
+</p>
+
+## 开箱即用，不需要学习
+
+EasyClipboard 刻意保持简单。完成安装与系统授权后，不需要配置工作区、看板、模板或自动化规则：
+
+1. 按 `⌘ ⇧ V` 或 `Ctrl + Shift + V` 打开。
+2. 直接输入关键词，搜索框已经自动聚焦。
+3. 使用 `↑` / `↓` 选择，按 `Return` / `Enter` 粘贴。
+
+需要长期保留的内容再放进分组；其余内容继续留在“最近”。整个产品只有这一套操作逻辑。
+
+## 与 Raycast、Maccy、PasteBar 有什么不同
+
+EasyClipboard 处在极简历史工具与复杂剪贴板工作台之间：比 Maccy 更适合整理，比 PasteBar 更轻量、简单，比 Raycast 更专注。
+
+| | EasyClipboard | Raycast | Maccy | PasteBar |
+| --- | --- | --- | --- | --- |
+| 产品定位 | 专用、简单、可分组的剪贴板 | 综合效率启动器中的剪贴板功能 | 极简 macOS 剪贴板 | 功能完整的剪贴板工作台 |
+| 平台 | macOS、Windows | macOS、Windows | macOS | macOS、Windows |
+| 上手方式 | 打开、输入、回车即可粘贴 | 需要进入 Raycast 命令体系 | 简单、键盘优先 | 需要理解 Collections、Tabs、Boards、Clips 等概念 |
+| 内容整理 | 最近、固定、一级分组 | 固定、过滤、Snippet | 主要使用固定 | 多层次集合、标签页、看板、模板和表单 |
+| 功能边界 | 只保留高频剪贴板流程 | 包含搜索、扩展、AI、窗口管理等完整生态 | 专注历史搜索 | 包含备份、模板、代码识别、保护集合等大量高级能力 |
+| 开源许可 | MIT | 主应用非开源 | MIT | 源码可见，许可证包含非商业限制 |
+
+### 为什么比 PasteBar 更简单
+
+[PasteBar](https://github.com/PasteBar/PasteBarApp) 功能很强，适合希望把剪贴板变成资料库或内容工作台的重度用户；但 Collections、Tabs、Boards、模板、表单和大量特殊操作也意味着更高的理解与配置成本。对于只是想“找到刚才复制的内容并马上粘贴”的用户，这套体系可能显得过重。
+
+EasyClipboard 选择了相反的方向：
+
+- 只有“最近”和一级分组，没有多层工作区结构。
+- 打开后立即进入搜索，不需要先选择功能或命令。
+- 方向键选择、回车粘贴，鼠标和键盘遵循同一套逻辑。
+- 分组内容自动永久保留，不需要额外设置保存规则。
+- 没有模板、表单、AI、账号或云同步，界面不会随着功能增加而变复杂。
+
+这不是功能缺失，而是明确的产品取舍：**EasyClipboard 希望成为无需阅读教程、安装后就会用的剪贴板工具。**
+
+### 与 Raycast 和 Maccy 的取舍
+
+- [Raycast](https://manual.raycast.com/clipboard-history) 的剪贴板能力更丰富，并与启动器、扩展和 AI 深度结合；EasyClipboard 适合只想安装一个专用剪贴板、不需要整套效率工具生态的用户。
+- [Maccy](https://github.com/p0deje/Maccy) 原生、成熟且非常简洁，但只支持 macOS，主要通过搜索和固定管理内容；EasyClipboard 进一步提供 Windows 支持、可见预览和永久分组。
+
+如果你需要复杂的资料库和模板系统，PasteBar 更合适；如果你只想按下快捷键、输入、回车，然后继续工作，EasyClipboard 更直接。
+
 ## 为什么选择 EasyClipboard
 
 - **快速唤起**：使用全局快捷键在当前屏幕底部打开面板。
