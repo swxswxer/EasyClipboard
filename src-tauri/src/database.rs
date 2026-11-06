@@ -206,6 +206,24 @@ impl Database {
                 )?;
                 transaction.commit()?;
             }
+            if schema_version < 4 {
+                let transaction = connection.transaction()?;
+                transaction.execute_batch(
+                    r#"
+                    CREATE VIRTUAL TABLE clipboard_fts_trigram USING fts5(
+                        item_id UNINDEXED,
+                        search_text,
+                        tokenize='trigram'
+                    );
+                    INSERT INTO clipboard_fts_trigram(item_id, search_text)
+                    SELECT item_id, search_text FROM clipboard_fts;
+                    DROP TABLE clipboard_fts;
+                    ALTER TABLE clipboard_fts_trigram RENAME TO clipboard_fts;
+                    PRAGMA user_version = 4;
+                    "#,
+                )?;
+                transaction.commit()?;
+            }
             connection.execute(
                 "INSERT OR IGNORE INTO settings(id, value_json) VALUES(1, ?1)",
                 params![default_settings],
@@ -240,16 +258,27 @@ impl Database {
                 let rows = statement.query_map(params![group_id, limit, offset], summary_from_row)?;
                 for row in rows { items.push(row?); }
             } else {
-                let fts_query = format!("\"{}\"*", trimmed.replace('"', "\"\""));
-                let mut statement = connection.prepare(
+                let use_trigram_index = trimmed.chars().count() >= 3;
+                let search_value = if use_trigram_index {
+                    format!("\"{}\"", trimmed.replace('"', "\"\""))
+                } else {
+                    contains_pattern(&trimmed)
+                };
+                let predicate = if use_trigram_index {
+                    "f.search_text MATCH ?1"
+                } else {
+                    "f.search_text LIKE ?1 ESCAPE '\\'"
+                };
+                let sql = format!(
                     "SELECT i.id, i.kind, i.title, i.source_name, i.source_app_id, i.copied_at, i.byte_size, i.pinned, i.group_id, i.missing_files
                      FROM clipboard_items i
                      JOIN clipboard_fts f ON f.item_id = i.id
-                     WHERE f.search_text MATCH ?1 AND (?2 IS NULL OR i.group_id = ?2)
+                     WHERE {predicate} AND (?2 IS NULL OR i.group_id = ?2)
                      ORDER BY i.copied_at DESC, i.id DESC
-                     LIMIT ?3 OFFSET ?4",
-                )?;
-                let rows = statement.query_map(params![fts_query, group_id, limit, offset], summary_from_row)?;
+                     LIMIT ?3 OFFSET ?4"
+                );
+                let mut statement = connection.prepare(&sql)?;
+                let rows = statement.query_map(params![search_value, group_id, limit, offset], summary_from_row)?;
                 for row in rows { items.push(row?); }
             }
             let next_cursor = (items.len() == limit as usize).then(|| (offset + limit).to_string());
@@ -846,6 +875,19 @@ impl Database {
     }
 }
 
+fn contains_pattern(value: &str) -> String {
+    let mut pattern = String::with_capacity(value.len() + 2);
+    pattern.push('%');
+    for character in value.chars() {
+        if matches!(character, '\\' | '%' | '_') {
+            pattern.push('\\');
+        }
+        pattern.push(character);
+    }
+    pattern.push('%');
+    pattern
+}
+
 fn summary_from_row(
     row: &tokio_rusqlite::rusqlite::Row<'_>,
 ) -> tokio_rusqlite::rusqlite::Result<ClipboardItemSummary> {
@@ -1155,6 +1197,25 @@ mod tests {
             .unwrap();
         assert_eq!(second.items.len(), 1);
         assert_ne!(first.items[0].id, second.items[0].id);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn search_matches_text_in_the_middle_and_short_substrings() {
+        let root = std::env::temp_dir().join(format!("easyclipboard-test-{}", Uuid::new_v4()));
+        let db = Database::open(&root).await.unwrap();
+        let expected = db.insert_capture(capture("哈哈哈123")).await.unwrap();
+        db.insert_capture(capture("unrelated")).await.unwrap();
+
+        for query in ["123", "哈123", "哈哈", "23"] {
+            let results = db.list_items(query.into(), None, None, 100).await.unwrap();
+            assert_eq!(
+                results.items.first().map(|item| item.id.as_str()),
+                Some(expected.as_str()),
+                "query {query:?} should match a substring"
+            );
+        }
+
         let _ = std::fs::remove_dir_all(root);
     }
 }

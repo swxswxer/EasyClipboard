@@ -113,6 +113,21 @@ describe("App", () => {
     expect(listItems.mock.calls.every(([options]) => options.groupId === "common")).toBe(true);
   });
 
+  it("keeps the search query when switching groups", async () => {
+    const listItems = vi.spyOn(repository, "listItems");
+    render(<App />);
+    const search = await screen.findByLabelText("搜索剪贴板");
+
+    fireEvent.change(search, { target: { value: "tauri" } });
+    await waitFor(() => expect(listItems.mock.calls.some(([options]) => options.query === "tauri" && options.groupId === null)).toBe(true));
+
+    fireEvent.click(screen.getByRole("button", { name: "代码片段" }));
+
+    expect(search).toHaveValue("tauri");
+    await waitFor(() => expect(listItems.mock.calls.some(([options]) => options.query === "tauri" && options.groupId === "code")).toBe(true));
+    expect(await screen.findByRole("option", { name: /https:\/\/tauri\.app/ })).toBeInTheDocument();
+  });
+
   it("dismisses transient menus and dialogs when the panel is hidden", async () => {
     render(<App />);
     await screen.findByRole("option", { name: /收到，我整理后今天发给你/ });

@@ -220,7 +220,6 @@ function ClipboardApp() {
       setMenu(null);
       if (deletingActiveGroup) {
         setActiveGroup("recent");
-        setQuery("");
         setSelectedId(null);
       }
       notify("分组已删除，内容已移回最近");
@@ -279,7 +278,7 @@ function ClipboardApp() {
       searchFocusRequest={searchFocusRequest}
       previousGroupShortcut={settings?.previousGroupShortcut ?? (permission?.platform === "windows" ? "Control+[" : "Command+[")}
       nextGroupShortcut={settings?.nextGroupShortcut ?? (permission?.platform === "windows" ? "Control+]" : "Command+]")}
-      onSetActiveGroup={(id) => { setActiveGroup(id); setQuery(""); setMenu(null); setSelectedId(null); }}
+      onSetActiveGroup={(id) => { setActiveGroup(id); setMenu(null); setSelectedId(null); }}
       onSetQuery={setQuery}
       onSelect={setSelectedId}
       onOpenDialog={(mode, group) => { setMenu(null); setDialog({ mode, groupId: group?.id, initialName: group?.name }); }} onCloseDialog={() => setDialog(null)} onSubmitDialog={(name) => void submitDialog(name)}
